@@ -231,6 +231,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const appUser = mapFirebaseUserToAppUser(cred.user);
       await applyAuthenticatedUser(appUser, cred.user);
     } catch (err: unknown) {
+      // Wait briefly to see if Firebase Auth state actually resolved despite COOP window.closed warning
+      await new Promise((r) => setTimeout(r, 400));
+      if (auth.currentUser) {
+        const appUser = mapFirebaseUserToAppUser(auth.currentUser);
+        await applyAuthenticatedUser(appUser, auth.currentUser);
+        return;
+      }
+
       if (isAuthProviderNotConfiguredError(err)) {
         await applyAuthenticatedUser({
           uid: "user_google_student",

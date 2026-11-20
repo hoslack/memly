@@ -11,6 +11,20 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "motion"],
   },
+  async rewrites() {
+    const projectId =
+      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "memly-bb934";
+    return [
+      {
+        source: "/__/auth/:path*",
+        destination: `https://${projectId}.firebaseapp.com/__/auth/:path*`,
+      },
+      {
+        source: "/__/firebase/init.json",
+        destination: `https://${projectId}.firebaseapp.com/__/firebase/init.json`,
+      },
+    ];
+  },
   async headers() {
     return [
       {
@@ -18,7 +32,7 @@ const nextConfig: NextConfig = {
         headers: [
           {
             key: "Cross-Origin-Opener-Policy",
-            value: "same-origin-allow-popups",
+            value: "unsafe-none",
           },
         ],
       },
