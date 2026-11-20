@@ -11,6 +11,9 @@ import { PdfValidationError } from "@/lib/gemini/pdf-processor";
 import { TextSubmissionSchema } from "@/lib/schemas/study";
 import { verifyAuthHeaderToken } from "@/lib/firebase/admin";
 
+// Allow up to 60 seconds execution time on Vercel Serverless Functions
+export const maxDuration = 60;
+
 // Simple per-client rate limiter to prevent runaway AI cost
 const rateLimitWindowMs = 60 * 1000; // 1 minute window
 const maxRequestsPerMinute = 8;

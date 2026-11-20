@@ -150,17 +150,28 @@ async function generateStructuredContentWithFallback(params: {
       const response = await withGeminiRetry(
         `${params.operationName} (${modelName})`,
         () =>
-          ai.models.generateContent({
-            model: modelName,
-            contents: params.contents,
-            config: {
-              systemInstruction: params.systemInstruction,
-              responseMimeType: "application/json",
-              temperature: params.temperature,
-            },
-          }),
-        1,
-        1000
+          Promise.race([
+            ai.models.generateContent({
+              model: modelName,
+              contents: params.contents,
+              config: {
+                systemInstruction: params.systemInstruction,
+                responseMimeType: "application/json",
+                temperature: params.temperature,
+              },
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error(`503 TIMEOUT: ${modelName} exceeded 18s limit`)
+                  ),
+                18000
+              )
+            ),
+          ]),
+        0,
+        500
       );
 
       if (response.text) {
@@ -169,14 +180,17 @@ async function generateStructuredContentWithFallback(params: {
     } catch (err: unknown) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
+      // If we hit a 429 quota or 18s timeout, break immediately so OpenRouter fallback can run inside the 60s Vercel window
+      if (msg.includes("429") || msg.includes("QUOTA") || msg.includes("TIMEOUT")) {
+        break;
+      }
       const isModelUnavailable =
         msg.includes("503") ||
         msg.includes("UNAVAILABLE") ||
         msg.includes("404") ||
         msg.includes("NOT_FOUND") ||
         msg.includes("high demand") ||
-        msg.includes("fetch failed") ||
-        msg.includes("TIMEOUT");
+        msg.includes("fetch failed");
       if (!isModelUnavailable) {
         throw err;
       }

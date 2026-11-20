@@ -207,12 +207,35 @@ export function DeckCreator({
         });
       }
 
-      const data = await response.json();
+      let data: {
+        success?: boolean;
+        error?: string;
+        code?: string;
+        deck?: unknown;
+        meta?: Record<string, unknown>;
+      } = {};
+
+      const rawResponseText = await response.text();
+      try {
+        data = rawResponseText ? JSON.parse(rawResponseText) : {};
+      } catch {
+        // Non-JSON response (e.g. Vercel 504 Gateway Timeout plain text)
+        if (response.status === 504 || response.status === 503 || response.status === 429) {
+          clearInterval(stageInterval);
+          setIsGenerating(false);
+          setShowQuotaModal(true);
+          return;
+        }
+        throw new Error(
+          "The AI server took too long to respond. Please try a shorter section of notes or try the Sample Deck below."
+        );
+      }
 
       if (!response.ok || !data.success) {
         const isQuotaOrRateLimit =
           response.status === 429 ||
           response.status === 503 ||
+          response.status === 504 ||
           data.code === "AI_QUOTA_EXCEEDED" ||
           data.code === "GEMINI_QUOTA_EXCEEDED" ||
           data.code === "RATE_LIMIT_EXCEEDED" ||
@@ -245,21 +268,41 @@ export function DeckCreator({
         userId: user.uid,
         payload: validatedPayload,
         sourceFileName:
-          data.meta?.sourceFileName ||
+          (typeof data.meta?.sourceFileName === "string"
+            ? data.meta.sourceFileName
+            : null) ||
           (activeTab === "pdf"
             ? selectedFile?.name || "notes.pdf"
             : "Pasted Notes"),
         sourceType: activeTab,
         aiMetadata: {
-          primaryProvider: data.meta?.primaryProvider || "gemini",
-          actualProvider: data.meta?.actualProvider || "gemini",
+          primaryProvider:
+            (data.meta?.primaryProvider as "gemini" | "openrouter") || "gemini",
+          actualProvider:
+            (data.meta?.actualProvider as "gemini" | "openrouter") || "gemini",
           model:
-            data.meta?.model || data.meta?.modelUsed || "gemini-3.5-flash-lite",
-          modelUsed: data.meta?.modelUsed || "gemini-3.5-flash-lite",
+            (typeof data.meta?.model === "string" ? data.meta.model : null) ||
+            (typeof data.meta?.modelUsed === "string"
+              ? data.meta.modelUsed
+              : null) ||
+            "gemini-3.5-flash-lite",
+          modelUsed:
+            (typeof data.meta?.modelUsed === "string"
+              ? data.meta.modelUsed
+              : null) || "gemini-3.5-flash-lite",
           fallbackUsed: Boolean(data.meta?.fallbackUsed),
-          generatedAt: data.meta?.generatedAt || new Date().toISOString(),
-          contentHash: data.meta?.contentHash,
-          generationDurationMs: data.meta?.generationDurationMs,
+          generatedAt:
+            (typeof data.meta?.generatedAt === "string"
+              ? data.meta.generatedAt
+              : null) || new Date().toISOString(),
+          contentHash:
+            typeof data.meta?.contentHash === "string"
+              ? data.meta.contentHash
+              : undefined,
+          generationDurationMs:
+            typeof data.meta?.generationDurationMs === "number"
+              ? data.meta.generationDurationMs
+              : undefined,
         },
       });
 
