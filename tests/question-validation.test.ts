@@ -78,24 +78,24 @@ describe("Gemini Structured Output & Four-Option Question Validation", () => {
 
 describe("Duplicate Detection and Topic Coverage Verification", () => {
   it("detects and removes duplicate or near-duplicate questions while calculating topic coverage", () => {
-    const baseQ = SAMPLE_DEVELOPMENT_DECK_PAYLOAD.questions[0];
+    const baseQ = SAMPLE_DEVELOPMENT_DECK_PAYLOAD.questions[1];
     const nearDuplicateQ = {
       ...baseQ,
       question:
-        "Which layer of the OSI model is responsible for logical addressing and determining the best path for packets across different networks?",
+        "If a notebook costs $8 and you buy 4 notebooks, how much do you spend in total?",
     };
-    const secondTopicQ = SAMPLE_DEVELOPMENT_DECK_PAYLOAD.questions[3];
+    const secondTopicQ = SAMPLE_DEVELOPMENT_DECK_PAYLOAD.questions[5];
 
     const topics = [
       {
-        name: "OSI & TCP/IP Reference Models",
-        subtopics: ["Layers"],
-        coverageNotes: "Test layers",
+        name: "Simple Everyday Math",
+        subtopics: ["Basic arithmetic"],
+        coverageNotes: "Test math",
       },
       {
-        name: "Network Layer & Routing",
-        subtopics: ["ARP"],
-        coverageNotes: "Test ARP",
+        name: "World Geography & Continents",
+        subtopics: ["Capital cities"],
+        coverageNotes: "Test geography",
       },
       {
         name: "Uncovered Quantum Networking Topic",
@@ -111,8 +111,8 @@ describe("Duplicate Detection and Topic Coverage Verification", () => {
 
     expect(validation.validQuestions).toHaveLength(2);
     expect(validation.duplicateCount).toBe(1);
-    expect(validation.coveredTopics).toContain("OSI & TCP/IP Reference Models");
-    expect(validation.coveredTopics).toContain("Network Layer & Routing");
+    expect(validation.coveredTopics).toContain("Simple Everyday Math");
+    expect(validation.coveredTopics).toContain("World Geography & Continents");
     expect(validation.uncoveredTopics).toContain(
       "Uncovered Quantum Networking Topic"
     );

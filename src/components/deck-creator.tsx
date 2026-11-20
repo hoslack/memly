@@ -14,6 +14,7 @@ import {
   X,
   ArrowRight,
   Zap,
+  Coffee,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/context";
 import { saveGeneratedDeck } from "@/lib/storage/repository";
@@ -90,6 +91,7 @@ export function DeckCreator({
   const [isDragging, setIsDragging] = useState(false);
   const [pastedText, setPastedText] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showQuotaModal, setShowQuotaModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeStageIndex, setActiveStageIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -141,6 +143,7 @@ export function DeckCreator({
 
   const handleGenerate = async () => {
     setErrorMessage(null);
+    setShowQuotaModal(false);
 
     if (activeTab === "pdf") {
       if (!selectedFile) {
@@ -207,6 +210,24 @@ export function DeckCreator({
       const data = await response.json();
 
       if (!response.ok || !data.success) {
+        const isQuotaOrRateLimit =
+          response.status === 429 ||
+          response.status === 503 ||
+          data.code === "AI_QUOTA_EXCEEDED" ||
+          data.code === "GEMINI_QUOTA_EXCEEDED" ||
+          data.code === "RATE_LIMIT_EXCEEDED" ||
+          (typeof data.error === "string" &&
+            (data.error.toLowerCase().includes("quota") ||
+              data.error.toLowerCase().includes("temporarily full") ||
+              data.error.toLowerCase().includes("rate limit")));
+
+        if (isQuotaOrRateLimit) {
+          clearInterval(stageInterval);
+          setIsGenerating(false);
+          setShowQuotaModal(true);
+          return;
+        }
+
         throw new Error(
           data.error ||
             "Failed to generate exam questions from your material. Please try again."
@@ -225,12 +246,15 @@ export function DeckCreator({
         payload: validatedPayload,
         sourceFileName:
           data.meta?.sourceFileName ||
-          (activeTab === "pdf" ? selectedFile?.name || "notes.pdf" : "Pasted Notes"),
+          (activeTab === "pdf"
+            ? selectedFile?.name || "notes.pdf"
+            : "Pasted Notes"),
         sourceType: activeTab,
         aiMetadata: {
           primaryProvider: data.meta?.primaryProvider || "gemini",
           actualProvider: data.meta?.actualProvider || "gemini",
-          model: data.meta?.model || data.meta?.modelUsed || "gemini-3.5-flash-lite",
+          model:
+            data.meta?.model || data.meta?.modelUsed || "gemini-3.5-flash-lite",
           modelUsed: data.meta?.modelUsed || "gemini-3.5-flash-lite",
           fallbackUsed: Boolean(data.meta?.fallbackUsed),
           generatedAt: data.meta?.generatedAt || new Date().toISOString(),
@@ -247,16 +271,24 @@ export function DeckCreator({
     } catch (err: unknown) {
       clearInterval(stageInterval);
       setIsGenerating(false);
-      setErrorMessage(
+      const msg =
         err instanceof Error
           ? err.message
-          : "Something went wrong while analysing your notes."
-      );
+          : "Something went wrong while analysing your notes.";
+      if (
+        msg.toLowerCase().includes("quota") ||
+        msg.toLowerCase().includes("temporarily full")
+      ) {
+        setShowQuotaModal(true);
+      } else {
+        setErrorMessage(msg);
+      }
     }
   };
 
   const handleLoadSampleDeck = async () => {
     setErrorMessage(null);
+    setShowQuotaModal(false);
     setIsGenerating(true);
     setActiveStageIndex(PROCESSING_STAGES.length - 1);
 
@@ -264,11 +296,16 @@ export function DeckCreator({
       const { deck } = await saveGeneratedDeck({
         userId: user.uid,
         payload: SAMPLE_DEVELOPMENT_DECK_PAYLOAD,
-        sourceFileName: "Computer_Networks_Lecture_Notes.pdf (Sample)",
+        sourceFileName: "General_Knowledge_Math_Geography.pdf (Sample)",
         sourceType: "sample",
         aiMetadata: {
-          modelUsed: "sample-development-deck",
-          generationDurationMs: 150,
+          primaryProvider: "sample",
+          actualProvider: "sample",
+          model: "sample-general-knowledge",
+          modelUsed: "sample-general-knowledge",
+          fallbackUsed: false,
+          generatedAt: new Date().toISOString(),
+          generationDurationMs: 120,
         },
       });
 
@@ -294,7 +331,7 @@ export function DeckCreator({
               <Loader2 className="h-7 w-7 animate-spin" />
             </div>
             <Badge variant="default" className="mb-2">
-              Gemini Exam Setter Active
+              AI Exam Setter Active
             </Badge>
             <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
               {PROCESSING_STAGES[activeStageIndex]?.label}
@@ -344,7 +381,8 @@ export function DeckCreator({
           </div>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
-            You will be taken straight to your flashcards as soon as generation completes.
+            You will be taken straight to your flashcards as soon as generation
+            completes.
           </p>
         </CardContent>
       </Card>
@@ -352,209 +390,290 @@ export function DeckCreator({
   }
 
   return (
-    <Card className="overflow-hidden border-border/80 shadow-md">
-      <CardContent className="p-5 sm:p-7">
-        {/* Input Method Selector Tabs */}
-        <div className="mb-6 grid grid-cols-2 gap-2 rounded-xl bg-secondary/70 p-1.5">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("pdf");
-              setErrorMessage(null);
-            }}
-            className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-all ${
-              activeTab === "pdf"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <FileUp className="h-4 w-4" />
-            <span>Upload a PDF</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("text");
-              setErrorMessage(null);
-            }}
-            className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-all ${
-              activeTab === "text"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <FileText className="h-4 w-4" />
-            <span>Paste Notes</span>
-          </button>
-        </div>
-
-        {/* Error Alert Banner */}
-        <AnimatePresence>
-          {errorMessage && (
-            <motion.div
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="mb-5 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
-              role="alert"
-            >
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div className="flex-1">
-                <p className="font-semibold">Unable to generate deck</p>
-                <p className="mt-0.5 opacity-90">{errorMessage}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setErrorMessage(null)}
-                className="rounded-lg p-1 hover:bg-destructive/15"
-                aria-label="Dismiss error"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Tab 1: PDF Drag and Drop Area */}
-        {activeTab === "pdf" ? (
-          <div>
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setIsDragging(true);
+    <>
+      <Card className="overflow-hidden border-border/80 shadow-md">
+        <CardContent className="p-5 sm:p-7">
+          {/* Input Method Selector Tabs */}
+          <div className="mb-6 grid grid-cols-2 gap-2 rounded-xl bg-secondary/70 p-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("pdf");
+                setErrorMessage(null);
               }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setIsDragging(false);
-              }}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`group relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-8 text-center transition-all sm:p-10 ${
-                isDragging
-                  ? "border-primary bg-primary/5"
-                  : selectedFile
-                  ? "border-emerald-500/50 bg-emerald-500/5"
-                  : "border-border hover:border-primary/50 hover:bg-accent/40"
+              className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-all ${
+                activeTab === "pdf"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                className="hidden"
-                onChange={(e) =>
-                  handleFileSelect(e.target.files?.[0] || null)
-                }
-              />
+              <FileUp className="h-4 w-4" />
+              <span>Upload a PDF</span>
+            </button>
 
-              {selectedFile ? (
-                <div className="flex flex-col items-center">
-                  <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                    <CheckCircle2 className="h-7 w-7" />
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("text");
+                setErrorMessage(null);
+              }}
+              className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-all ${
+                activeTab === "text"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <FileText className="h-4 w-4" />
+              <span>Paste Notes</span>
+            </button>
+          </div>
+
+          {/* Error Alert Banner */}
+          <AnimatePresence>
+            {errorMessage && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                className="mb-5 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
+                role="alert"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="flex-1">
+                  <p className="font-semibold">Unable to generate deck</p>
+                  <p className="mt-0.5 opacity-90">{errorMessage}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setErrorMessage(null)}
+                  className="rounded-lg p-1 hover:bg-destructive/15"
+                  aria-label="Dismiss error"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Tab 1: PDF Drag and Drop Area */}
+          {activeTab === "pdf" ? (
+            <div>
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDragging(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDragging(false);
+                }}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`group relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-8 text-center transition-all sm:p-10 ${
+                  isDragging
+                    ? "border-primary bg-primary/5"
+                    : selectedFile
+                    ? "border-emerald-500/50 bg-emerald-500/5"
+                    : "border-border hover:border-primary/50 hover:bg-accent/40"
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  className="hidden"
+                  onChange={(e) =>
+                    handleFileSelect(e.target.files?.[0] || null)
+                  }
+                />
+
+                {selectedFile ? (
+                  <div className="flex flex-col items-center">
+                    <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="h-7 w-7" />
+                    </div>
+                    <p className="text-base font-bold text-foreground">
+                      {selectedFile.name}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • PDF
+                      ready for AI analysis
+                    </p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="mt-3 text-xs text-muted-foreground hover:text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedFile(null);
+                      }}
+                    >
+                      Remove file & choose another
+                    </Button>
                   </div>
-                  <p className="text-base font-bold text-foreground">
-                    {selectedFile.name}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • PDF ready
-                    for Gemini analysis
-                  </p>
+                ) : (
+                  <div className="flex flex-col items-center">
+                    <div className="mb-3.5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-transform group-hover:scale-105">
+                      <FileUp className="h-7 w-7" />
+                    </div>
+                    <p className="text-base font-bold text-foreground">
+                      Drop your lecture PDF here, or{" "}
+                      <span className="text-primary underline underline-offset-4">
+                        browse files
+                      </span>
+                    </p>
+                    <p className="mt-1.5 max-w-sm text-xs text-muted-foreground">
+                      Supports slides, textbooks, handouts, tables & diagrams up
+                      to 20 MB. No setup needed—AI detects topics automatically.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Tab 2: Large Pasted Notes Area */
+            <div className="space-y-2">
+              <label
+                htmlFor="notes-textarea"
+                className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                Paste your lecture notes, study guide, or chapter text
+              </label>
+              <textarea
+                id="notes-textarea"
+                rows={8}
+                value={pastedText}
+                onChange={(e) => setPastedText(e.target.value)}
+                placeholder="Paste your raw notes, definitions, lecture transcript, or textbook paragraphs here... Memly will identify every examinable topic and turn it into multiple-choice flashcards."
+                className="w-full resize-y rounded-2xl border border-input bg-background p-4 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Minimum 120 characters required</span>
+                <span>
+                  {pastedText.trim().length.toLocaleString()} characters
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Primary Action Button */}
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Button
+              type="button"
+              size="lg"
+              onClick={handleGenerate}
+              disabled={
+                activeTab === "pdf"
+                  ? !selectedFile
+                  : pastedText.trim().length < 120
+              }
+              className="w-full sm:flex-1 gap-2 text-base shadow-md"
+            >
+              <Sparkles className="h-5 w-5" />
+              <span>Start Revising Now</span>
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Instant Sample Exam Deck Option (Zero API Credits needed) */}
+          <div className="mt-5 flex flex-col items-center justify-between gap-2 border-t border-border/60 pt-4 sm:flex-row">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <BookOpen className="h-3.5 w-3.5 text-primary" />
+              <span>Want to test the flashcard experience right away?</span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleLoadSampleDeck}
+              className="gap-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              <span>Try Sample Deck (Math & Geography)</span>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Friendly Quota Reached Modal Inviting User to Test the Sample Deck */}
+      <AnimatePresence>
+        {showQuotaModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quota-modal-title"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 12 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative w-full max-w-md rounded-3xl border border-border bg-card p-6 text-card-foreground shadow-2xl sm:p-8"
+            >
+              <button
+                type="button"
+                onClick={() => setShowQuotaModal(false)}
+                aria-label="Close modal"
+                className="absolute right-4 top-4 rounded-xl p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+              <div className="flex flex-col items-center text-center">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                  <Coffee className="h-7 w-7" />
+                </div>
+
+                <Badge variant="warning" className="mb-2">
+                  High Study Demand
+                </Badge>
+
+                <h3
+                  id="quota-modal-title"
+                  className="text-xl font-extrabold tracking-tight text-foreground sm:text-2xl"
+                >
+                  Our AI exam setter is taking a quick breather!
+                </h3>
+
+                <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
+                  Free AI generation quota is temporarily full right now. Don’t
+                  worry—your uploaded material is still here. While it resets,
+                  why not jump in and test the interactive flashcards with our{" "}
+                  <span className="font-semibold text-foreground">
+                    General Knowledge (Math & Geography)
+                  </span>{" "}
+                  sample deck?
+                </p>
+
+                <div className="mt-7 flex w-full flex-col gap-2.5">
+                  <Button
+                    type="button"
+                    size="lg"
+                    onClick={handleLoadSampleDeck}
+                    className="w-full gap-2 text-base shadow-md"
+                  >
+                    <Zap className="h-5 w-5" />
+                    <span>Try Sample Deck (Math & Geography)</span>
+                  </Button>
+
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
-                    className="mt-3 text-xs text-muted-foreground hover:text-destructive"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedFile(null);
-                    }}
+                    onClick={() => setShowQuotaModal(false)}
+                    className="w-full text-xs text-muted-foreground hover:text-foreground"
                   >
-                    Remove file & choose another
+                    Back to my notes
                   </Button>
                 </div>
-              ) : (
-                <div className="flex flex-col items-center">
-                  <div className="mb-3.5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-transform group-hover:scale-105">
-                    <FileUp className="h-7 w-7" />
-                  </div>
-                  <p className="text-base font-bold text-foreground">
-                    Drop your lecture PDF here, or{" "}
-                    <span className="text-primary underline underline-offset-4">
-                      browse files
-                    </span>
-                  </p>
-                  <p className="mt-1.5 max-w-sm text-xs text-muted-foreground">
-                    Supports slides, textbooks, handouts, tables & diagrams up to 20 MB.
-                    No setup needed—Gemini detects topics automatically.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          /* Tab 2: Large Pasted Notes Area */
-          <div className="space-y-2">
-            <label
-              htmlFor="notes-textarea"
-              className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-            >
-              Paste your lecture notes, study guide, or chapter text
-            </label>
-            <textarea
-              id="notes-textarea"
-              rows={8}
-              value={pastedText}
-              onChange={(e) => setPastedText(e.target.value)}
-              placeholder="Paste your raw notes, definitions, lecture transcript, or textbook paragraphs here... Gemini will identify every examinable topic and turn it into multiple-choice flashcards."
-              className="w-full resize-y rounded-2xl border border-input bg-background p-4 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Minimum 120 characters required</span>
-              <span>{pastedText.trim().length.toLocaleString()} characters</span>
-            </div>
+              </div>
+            </motion.div>
           </div>
         )}
-
-        {/* Primary Action Button */}
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Button
-            type="button"
-            size="lg"
-            onClick={handleGenerate}
-            disabled={
-              activeTab === "pdf"
-                ? !selectedFile
-                : pastedText.trim().length < 120
-            }
-            className="w-full sm:flex-1 gap-2 text-base shadow-md"
-          >
-            <Sparkles className="h-5 w-5" />
-            <span>Start Revising Now</span>
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-        </div>
-
-        {/* Instant Sample Exam Deck Option (Zero API Credits needed) */}
-        <div className="mt-5 flex flex-col items-center justify-between gap-2 border-t border-border/60 pt-4 sm:flex-row">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <BookOpen className="h-3.5 w-3.5 text-primary" />
-            <span>Want to test the flashcard experience right away?</span>
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={handleLoadSampleDeck}
-            className="gap-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
-          >
-            <Zap className="h-3.5 w-3.5" />
-            <span>Try Sample Deck (Computer Networks)</span>
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+      </AnimatePresence>
+    </>
   );
 }
