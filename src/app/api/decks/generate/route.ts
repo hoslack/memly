@@ -172,29 +172,31 @@ export async function POST(req: NextRequest) {
     const rawMsg = err instanceof Error ? err.message : String(err);
     console.error("[/api/decks/generate] Error:", err);
 
-    if (rawMsg.includes("429") || rawMsg.toLowerCase().includes("quota")) {
+    const lowerMsg = rawMsg.toLowerCase();
+    if (
+      rawMsg.includes("429") ||
+      lowerMsg.includes("quota") ||
+      lowerMsg.includes("rate limit") ||
+      lowerMsg.includes("resource_exhausted") ||
+      lowerMsg.includes("temporarily full") ||
+      rawMsg.includes("503") ||
+      lowerMsg.includes("high demand") ||
+      lowerMsg.includes("unavailable")
+    ) {
       return NextResponse.json(
         {
           error:
-            "AI quota or rate limit reached across providers. Your notes are still in the editor—please wait a moment and try again, or try the built-in Sample Exam Deck.",
+            "AI study quota is temporarily full. Your notes are saved—please try again in a minute, or practise with the Sample Deck below.",
           code: "AI_QUOTA_EXCEEDED",
         },
         { status: 429 }
       );
     }
 
-    // Redact any accidental credential substrings before returning a safe error
-    const safeDetail = rawMsg
-      .replace(/AIza[0-9A-Za-z-_]{35}/g, "[REDACTED]")
-      .replace(/AQ\.[0-9A-Za-z-_]+/g, "[REDACTED]")
-      .replace(/sk-or-v1-[0-9A-Za-z-_]+/g, "[REDACTED]")
-      .slice(0, 260);
-
     return NextResponse.json(
       {
-        error: safeDetail
-          ? `Unable to complete analysis: ${safeDetail}`
-          : "An unexpected error occurred while analysing your study material. Please check your file or try again.",
+        error:
+          "We couldn't generate flashcards from this material right now. Please try again in a moment.",
         code: "INTERNAL_GENERATION_ERROR",
       },
       { status: 500 }

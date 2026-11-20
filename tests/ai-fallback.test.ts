@@ -277,7 +277,7 @@ describe("AI Provider Fallback & Priority (Gemini Primary -> OpenRouter Fallback
         task: (provider) => provider.generateFromText("Valid study notes"),
       })
     ).rejects.toThrow(
-      /AI generation services are temporarily unavailable.*Your notes are preserved/i
+      /AI study quota is temporarily full.*Your notes are saved/i
     );
   });
 

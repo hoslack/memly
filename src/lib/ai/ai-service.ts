@@ -119,11 +119,13 @@ export async function executeAIRequest(params: {
           ? openRouterError.message
           : String(openRouterError);
 
+      console.error(
+        "[AI Fallback Error] Both Gemini and OpenRouter failed:",
+        { geminiMsg, orMsg }
+      );
+
       throw new Error(
-        `AI generation services are temporarily unavailable (Primary Gemini and Fallback OpenRouter both failed). Your notes are preserved—please retry in a moment. Details: [Gemini: ${geminiMsg.slice(
-          0,
-          100
-        )}] [OpenRouter: ${orMsg.slice(0, 100)}]`
+        "AI study quota is temporarily full. Your notes are saved—please try again in a minute, or practise with the Sample Deck below."
       );
     }
   }
