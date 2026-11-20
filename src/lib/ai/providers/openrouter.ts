@@ -23,6 +23,13 @@ import {
 } from "../../pdf/extract-text";
 
 export const DEFAULT_OPENROUTER_MODEL = "openrouter/free";
+export const OPENROUTER_FREE_FALLBACK_MODELS = [
+  "openrouter/free",
+  "google/gemma-3-27b-it:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "qwen/qwen-2.5-72b-instruct:free",
+  "mistralai/mistral-small-3.1-24b-instruct:free",
+];
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 export function getOpenRouterModelName(): string {
@@ -94,7 +101,10 @@ export async function callOpenRouterJson(params: {
   temperature?: number;
 }): Promise<OpenRouterCompletionResult> {
   const apiKey = getOpenRouterApiKey();
-  const model = getOpenRouterModelName();
+  const configuredModel = getOpenRouterModelName();
+  const candidateModels = Array.from(
+    new Set([configuredModel, ...OPENROUTER_FREE_FALLBACK_MODELS])
+  );
   const siteUrl =
     process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost:3000";
   const appName =
@@ -107,9 +117,12 @@ export async function callOpenRouterJson(params: {
     "X-Title": appName,
   };
 
-  const makeRequest = async (includeResponseFormat: boolean) => {
+  const makeRequestForModel = async (
+    targetModel: string,
+    includeResponseFormat: boolean
+  ) => {
     const body: Record<string, unknown> = {
-      model,
+      model: targetModel,
       messages: [
         {
           role: "system",
@@ -140,7 +153,7 @@ export async function callOpenRouterJson(params: {
         statusCode: res.status,
         isQuotaOrRateLimit: res.status === 429,
         isTemporaryUnavailable: res.status >= 500,
-        message: `OpenRouter HTTP ${res.status}: ${errText.slice(0, 200)}`,
+        message: `OpenRouter HTTP ${res.status} (${targetModel}): ${errText.slice(0, 200)}`,
       });
     }
 
@@ -154,6 +167,8 @@ export async function callOpenRouterJson(params: {
       throw new AIProviderError({
         provider: "openrouter",
         statusCode: json.error.code || 500,
+        isQuotaOrRateLimit: json.error.code === 429,
+        isTemporaryUnavailable: (json.error.code || 500) >= 500,
         message: json.error.message || "OpenRouter returned an error payload.",
       });
     }
@@ -168,19 +183,41 @@ export async function callOpenRouterJson(params: {
 
     return {
       content,
-      modelUsed: json.model || model,
+      modelUsed: json.model || targetModel,
     };
   };
 
-  try {
-    return await makeRequest(true);
-  } catch (err: unknown) {
-    // Some free routed models reject response_format: { type: "json_object" } with 400; retry once with JSON-only instructions
-    if (err instanceof AIProviderError && err.statusCode === 400) {
-      return await makeRequest(false);
+  let lastError: unknown;
+
+  for (const candidateModel of candidateModels) {
+    try {
+      try {
+        return await makeRequestForModel(candidateModel, true);
+      } catch (err: unknown) {
+        // Some free routed models reject response_format: { type: "json_object" } with 400; retry without it
+        if (err instanceof AIProviderError && err.statusCode === 400) {
+          return await makeRequestForModel(candidateModel, false);
+        }
+        throw err;
+      }
+    } catch (err: unknown) {
+      lastError = err;
+      // If 401 unauthorized (invalid OpenRouter API key), stop immediately
+      if (err instanceof AIProviderError && err.statusCode === 401) {
+        throw err;
+      }
+      // For 429 / 404 / 503 on a specific free model, try the next free model in the pool
     }
-    throw err;
   }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new AIProviderError({
+        provider: "openrouter",
+        statusCode: 429,
+        isQuotaOrRateLimit: true,
+        message: "All OpenRouter free models are currently rate-limited.",
+      });
 }
 
 /**

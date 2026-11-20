@@ -108,9 +108,9 @@ export async function validateAndPreparePdf(
     throw new PdfValidationError("The PDF document contains 0 pages.");
   }
 
-  if (pageCount > 120) {
+  if (pageCount > 400) {
     throw new PdfValidationError(
-      `This PDF has ${pageCount} pages. To ensure thorough exam coverage and fast generation, please upload lecture notes or chapters up to 120 pages at a time.`
+      `This PDF has ${pageCount} pages. To ensure thorough exam coverage and fast generation, please upload lecture notes or chapters up to 400 pages at a time.`
     );
   }
 

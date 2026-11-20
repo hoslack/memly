@@ -208,12 +208,14 @@ export function chunkExtractedPages(
 }
 
 /**
- * Extracts text from a single page using pdfjs-dist while preserving line breaks and reading order.
+ * Extracts text from a PDF buffer using `pdfjs-dist` (with automatic fallback to `pdf-parse`
+ * and zlib stream decompression in Vercel serverless environments where the pdfjs worker file is not bundled).
  */
 async function extractPagesWithPdfJs(
   pdfBuffer: Buffer,
   expectedPageCount: number
 ): Promise<Array<{ pageNumber: number; text: string }>> {
+  // Strategy 1: Try pdfjs-dist legacy build
   try {
     const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const uint8Array = new Uint8Array(pdfBuffer);
@@ -257,10 +259,66 @@ async function extractPagesWithPdfJs(
       });
     }
 
-    return extracted;
+    const totalTextLen = extracted.reduce((acc, p) => acc + p.text.length, 0);
+    if (totalTextLen >= 50) {
+      return extracted;
+    }
   } catch {
-    return extractPagesFromPdfStreamsFallback(pdfBuffer, expectedPageCount);
+    // Proceed to Strategy 2 (pdf-parse per-page renderer)
   }
+
+  // Strategy 2: Use pdf-parse with custom pagerender to preserve exact page boundaries in Node.js / Vercel Serverless
+  try {
+    // Import lib/pdf-parse.js directly to avoid pdf-parse's index.js debug test file lookup
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require("pdf-parse/lib/pdf-parse.js") as (
+      buf: Buffer,
+      opts?: Record<string, unknown>
+    ) => Promise<{ text: string; numpages: number }>;
+
+    const perPageTexts: string[] = [];
+
+    await pdfParse(pdfBuffer, {
+      pagerender: async (pageData: {
+        getTextContent: (opts?: Record<string, unknown>) => Promise<{
+          items: Array<{ str?: string; transform?: number[] }>;
+        }>;
+      }) => {
+        const textContent = await pageData.getTextContent({
+          normalizeWhitespace: false,
+          disableCombineTextItems: false,
+        });
+        let lastY: number | undefined;
+        let text = "";
+        for (const item of textContent.items) {
+          const y = item.transform?.[5];
+          if (lastY === y || lastY === undefined) {
+            text += (item.str || "") + " ";
+          } else {
+            text += "\n" + (item.str || "") + " ";
+          }
+          lastY = y;
+        }
+        const cleaned = text
+          .replace(/[ \t]+/g, " ")
+          .replace(/\n\s*\n+/g, "\n")
+          .trim();
+        perPageTexts.push(cleaned);
+        return cleaned;
+      },
+    });
+
+    if (perPageTexts.length > 0) {
+      return perPageTexts.map((t, idx) => ({
+        pageNumber: idx + 1,
+        text: t,
+      }));
+    }
+  } catch {
+    // Proceed to Strategy 3
+  }
+
+  return extractPagesFromPdfStreamsFallback(pdfBuffer, expectedPageCount);
 }
 
 /**

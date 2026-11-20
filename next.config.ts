@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
     "firebase-admin",
     "@google/genai",
     "pdf-lib",
+    "pdf-parse",
     "pdfjs-dist",
     "tesseract.js",
   ],
