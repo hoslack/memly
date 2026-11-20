@@ -147,6 +147,7 @@ async function generateStructuredContentWithFallback(params: {
 }): Promise<{ text: string; modelUsed: string }> {
   const ai = getGeminiClient();
   const candidates = getCandidateGeminiModels();
+  const startTime = Date.now();
   let lastErr: unknown;
 
   for (const modelName of candidates) {
@@ -184,19 +185,23 @@ async function generateStructuredContentWithFallback(params: {
     } catch (err: unknown) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      // If we hit a 429 quota or 18s timeout, break immediately so OpenRouter fallback can run inside the 60s Vercel window
-      if (msg.includes("429") || msg.includes("QUOTA") || msg.includes("TIMEOUT")) {
-        break;
-      }
       const isModelUnavailable =
+        msg.includes("429") ||
+        msg.includes("QUOTA") ||
+        msg.includes("RESOURCE_EXHAUSTED") ||
         msg.includes("503") ||
         msg.includes("UNAVAILABLE") ||
         msg.includes("404") ||
         msg.includes("NOT_FOUND") ||
         msg.includes("high demand") ||
-        msg.includes("fetch failed");
+        msg.includes("fetch failed") ||
+        msg.includes("TIMEOUT");
       if (!isModelUnavailable) {
         throw err;
+      }
+      // If we've already spent > 22 seconds trying primary Gemini models, break so OpenRouter free models have plenty of time
+      if (Date.now() - startTime > 22000) {
+        break;
       }
     }
   }

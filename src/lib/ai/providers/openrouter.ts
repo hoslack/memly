@@ -25,12 +25,84 @@ import {
 export const DEFAULT_OPENROUTER_MODEL = "openrouter/free";
 export const OPENROUTER_FREE_FALLBACK_MODELS = [
   "openrouter/free",
-  "google/gemma-3-27b-it:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-  "mistralai/mistral-small-3.1-24b-instruct:free",
+  "nvidia/nemotron-3.5-lightning:free",
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "inclusionai/ling-3.2-flash:free",
+  "baidu/ernie-5.5-flash-preview:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "nvidia/nemotron-3.5-super-vl:free",
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+  "recursive/flint-v1.0:free",
+  "particle-ai/particle-1:free",
+  "dots-studio/dots-3-note-preview:free",
+  "liquid/lfm-3-1.7b:free",
 ];
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+
+let cachedDynamicFreeModels: { timestamp: number; models: string[] } | null =
+  null;
+const FREE_MODELS_CACHE_TTL_MS = 1000 * 60 * 30; // 30 minutes
+
+/**
+ * Dynamically fetches all currently available free text models ($0 prompt & $0 completion)
+ * from OpenRouter's live catalog, combined with our verified static free list.
+ */
+export async function getAllAvailableFreeOpenRouterModels(): Promise<string[]> {
+  const configured = getOpenRouterModelName();
+  const baseList = [configured, ...OPENROUTER_FREE_FALLBACK_MODELS];
+
+  if (
+    cachedDynamicFreeModels &&
+    Date.now() - cachedDynamicFreeModels.timestamp < FREE_MODELS_CACHE_TTL_MS
+  ) {
+    return Array.from(new Set([...baseList, ...cachedDynamicFreeModels.models]));
+  }
+
+  try {
+    const res = await Promise.race([
+      fetch(OPENROUTER_MODELS_URL, { method: "GET" }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+    ]);
+
+    if (res && res.ok) {
+      const json = (await res.json()) as {
+        data?: Array<{
+          id?: string;
+          pricing?: { prompt?: string | number; completion?: string | number };
+        }>;
+      };
+
+      if (Array.isArray(json.data)) {
+        const dynamicFree = json.data
+          .filter((m) => {
+            if (!m.id || m.id.includes("lyria") || m.id.includes("tts")) {
+              return false;
+            }
+            const isFreeSuffix = m.id.endsWith(":free") || m.id === "openrouter/free";
+            const isZeroPrice =
+              Number(m.pricing?.prompt) === 0 &&
+              Number(m.pricing?.completion) === 0;
+            return isFreeSuffix || isZeroPrice;
+          })
+          .map((m) => m.id!);
+
+        if (dynamicFree.length > 0) {
+          cachedDynamicFreeModels = {
+            timestamp: Date.now(),
+            models: dynamicFree,
+          };
+          return Array.from(new Set([...baseList, ...dynamicFree]));
+        }
+      }
+    }
+  } catch {
+    // Fallback to static verified free model list
+  }
+
+  return Array.from(new Set(baseList));
+}
 
 export function getOpenRouterModelName(): string {
   const configured = process.env.OPENROUTER_MODEL?.trim();
@@ -101,10 +173,7 @@ export async function callOpenRouterJson(params: {
   temperature?: number;
 }): Promise<OpenRouterCompletionResult> {
   const apiKey = getOpenRouterApiKey();
-  const configuredModel = getOpenRouterModelName();
-  const candidateModels = Array.from(
-    new Set([configuredModel, ...OPENROUTER_FREE_FALLBACK_MODELS])
-  );
+  const candidateModels = await getAllAvailableFreeOpenRouterModels();
   const siteUrl =
     process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost:3000";
   const appName =
