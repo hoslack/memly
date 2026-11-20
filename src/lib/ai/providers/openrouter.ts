@@ -17,8 +17,10 @@ import {
 import { validateAndDeduplicateQuestions } from "../prompts/question-validation";
 import { InsufficientMaterialError } from "../../gemini/client";
 import { AIProviderError, OpenRouterConfigurationError } from "../fallback";
-import { extractTextFromPdfForFallback } from "../pdf-text-extractor";
-import { validateAndPreparePdf } from "../../gemini/pdf-processor";
+import {
+  extractPdfText,
+  ExtractedPdfChunk,
+} from "../../pdf/extract-text";
 
 export const DEFAULT_OPENROUTER_MODEL = "openrouter/free";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -369,44 +371,34 @@ export async function executeOpenRouterTextPipeline(
 }
 
 /**
- * Full OpenRouter fallback pipeline for PDF documents:
- * 1. Validates PDF structure
- * 2. Extracts text page-by-page using pdfjs-dist (preserving page references)
- * 3. Detects scanned pages and applies Tesseract.js OCR when needed
- * 4. Processes sections through OpenRouter
- * 5. Consolidates topics, validates & deduplicates questions
+ * Shared OpenRouter pipeline operating on pre-extracted chunks (with preserved PAGE N: references).
  */
-export async function executeOpenRouterPdfPipeline(
-  pdfBuffer: Buffer,
-  fileName: string
-): Promise<{ payload: GeneratedDeckPayload; modelUsed: string }> {
-  await validateAndPreparePdf(pdfBuffer, fileName, "application/pdf");
-
-  const extracted = await extractTextFromPdfForFallback(pdfBuffer);
-
-  const words = extracted.fullText
-    .replace(/\[Page \d+\]/g, "")
-    .trim()
-    .split(/\s+/)
-    .filter((w) => w.length > 1);
-
-  if (words.length < 20) {
-    throw new InsufficientMaterialError(
-      "Could not extract enough readable text from this PDF during fallback processing."
-    );
-  }
-
+export async function executeOpenRouterChunksPipeline(params: {
+  chunks: ExtractedPdfChunk[];
+  fileName?: string;
+  totalPages?: number;
+}): Promise<{ payload: GeneratedDeckPayload; modelUsed: string }> {
+  const { chunks, fileName, totalPages } = params;
   const sectionAnalyses: DocumentAnalysis[] = [];
   let lastModelUsed = getOpenRouterModelName();
 
-  for (const section of extracted.sections) {
-    const rangeLabel = `Pages ${section.startPage} to ${section.endPage} of ${extracted.totalPages}`;
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const rangeLabel =
+      chunks.length > 1
+        ? `Pages ${chunk.startPage} to ${chunk.endPage}${
+            totalPages ? ` of ${totalPages}` : ""
+          } (Chunk ${i + 1} of ${chunks.length})`
+        : totalPages
+        ? `Pages 1 to ${totalPages}`
+        : `Section 1`;
+
     const { analysis, modelUsed } = await analyzeTextWithOpenRouter(
-      section.text,
+      chunk.text,
       {
         fileName,
         pageRangeLabel: rangeLabel,
-        totalPages: extracted.totalPages,
+        totalPages,
       }
     );
     sectionAnalyses.push(analysis);
@@ -418,17 +410,22 @@ export async function executeOpenRouterPdfPipeline(
   const allRawQuestions: unknown[] = [];
   const collectedStems: string[] = [];
 
-  for (let i = 0; i < extracted.sections.length; i++) {
-    const section = extracted.sections[i];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
     const secAnalysis = sectionAnalyses[i];
-    const rangeLabel = `Pages ${section.startPage}-${section.endPage}`;
+    const rangeLabel =
+      chunks.length > 1
+        ? `Pages ${chunk.startPage}-${chunk.endPage}`
+        : totalPages
+        ? `Pages 1-${totalPages}`
+        : `Section 1`;
 
     const { questions, modelUsed } = await generateQuestionsWithOpenRouter({
-      sourceText: section.text,
+      sourceText: chunk.text,
       analysis: unifiedAnalysis,
       targetTopics: secAnalysis.topics,
       targetQuestionCount:
-        extracted.sections.length === 1
+        chunks.length === 1
           ? unifiedAnalysis.recommendedQuestionCount
           : Math.max(8, Math.min(25, secAnalysis.recommendedQuestionCount)),
       existingQuestionStems: collectedStems,
@@ -473,8 +470,24 @@ export async function executeOpenRouterPdfPipeline(
   return { payload, modelUsed: lastModelUsed };
 }
 
+/**
+ * Full OpenRouter fallback pipeline for PDF documents using the shared `extractPdfText` pipeline.
+ */
+export async function executeOpenRouterPdfPipeline(
+  pdfBuffer: Buffer,
+  fileName: string
+): Promise<{ payload: GeneratedDeckPayload; modelUsed: string }> {
+  const extracted = await extractPdfText(pdfBuffer, { fileName });
+  return executeOpenRouterChunksPipeline({
+    chunks: extracted.chunks,
+    fileName: extracted.fileName,
+    totalPages: extracted.totalPages,
+  });
+}
+
 export const openRouterProvider = {
   name: "openrouter" as const,
   generateFromText: executeOpenRouterTextPipeline,
+  generateFromChunks: executeOpenRouterChunksPipeline,
   generateFromPdf: executeOpenRouterPdfPipeline,
 };

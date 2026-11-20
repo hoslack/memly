@@ -13,9 +13,10 @@ Memly is a production-minded, mobile-first exam revision application built for s
 - **Animations & Gestures:** Motion (`motion/react`) for smooth card transitions and mobile swipe interactions
 - **Primary AI Provider:** Official `@google/genai` SDK (`gemini-3.5-flash-lite` configurable via `GEMINI_MODEL`)
 - **Fallback AI Provider:** OpenRouter (`openrouter/free` configurable via `OPENROUTER_MODEL`) — automatically invoked **only** when Gemini experiences HTTP 429 quota exhaustion/rate limits or HTTP 500/503 temporary service unavailability
-- **PDF Processing:**
-  - **Primary (Gemini):** Native Gemini multimodal PDF understanding + Gemini Files API + `pdf-lib` validation & section chunking
-  - **Fallback (OpenRouter):** Page-by-page PDF text extraction with `pdfjs-dist` + automatic scanned-page OCR detection via `tesseract.js`
+- **Shared PDF Processing Pipeline (`src/lib/pdf/extract-text.ts`):**
+  - Provider-agnostic PDF text extraction using `pdfjs-dist` + `pdf-lib` structural validation (and optional `tesseract.js` OCR fallback)
+  - Extracts selectable text from every page **once per upload**, preserving page boundaries (`PAGE 1:`, `PAGE 2:`, ...) and chunking large documents cleanly
+  - Passes the exact same normalized extracted text and page references to **all configured AI providers** (Gemini primary, OpenRouter fallback, and any additional providers) without re-uploading or re-extracting the PDF
 - **Authentication & Storage:** Firebase Authentication (Google & Email/Password + zero-friction Guest Mode), Cloud Firestore, Firebase Storage, plus automatic browser `localStorage` offline persistence
 - **Validation & Testing:** Zod structured schemas + Vitest test suite
 
@@ -58,25 +59,26 @@ Configure your server-side AI keys and Firebase variables inside `.env.local`:
 
 ---
 
-## 3. AI Provider Priority & Fallback Architecture (`src/lib/ai/`)
+## 3. Shared PDF Extraction & AI Provider Architecture
 
-The fundamental rule is: **GEMINI FIRST. OPENROUTER ONLY WHEN GEMINI CANNOT SERVE THE REQUEST.**
+The application uses a **single shared PDF text extraction pipeline** (`src/lib/pdf/extract-text.ts`) that extracts and normalizes text once per upload before passing the extracted study material to the AI provider system:
+
+```text
+PDF Upload → Shared PDF Text Extraction (pdfjs-dist, PAGE 1..N) → AI Service → Gemini (Primary)
+                                                                             ↳ OpenRouter (Fallback on 429/503)
+```
 
 ```
-src/lib/ai/
-  providers/
-    gemini.ts          # Primary Google Gemini provider (native multimodal PDF & text)
-    openrouter.ts      # Secondary OpenRouter fallback provider
-  ai-service.ts        # Centralised execution service, caching & provider metadata tracking
-  fallback.ts          # Intelligent error classification (isEligibleForFallback)
-  pdf-text-extractor.ts# pdfjs-dist page extraction + Tesseract.js OCR for OpenRouter PDF fallback
-  prompts/
-    document-analysis.ts
-    question-generation.ts
-    question-validation.ts
-  schemas/
-    deck-schema.ts
-    question-schema.ts
+src/lib/
+  pdf/
+    extract-text.ts    # Shared provider-agnostic PDF text extraction, page markers & chunking
+  ai/
+    ai-service.ts      # Centralised AI execution service, caching & provider fallback
+    gemini.ts          # Primary Google Gemini provider integration
+    openrouter.ts      # Secondary OpenRouter fallback provider integration
+    prompts.ts         # Shared document-analysis & question-generation prompts
+    schemas.ts         # Shared Zod validation schemas
+    fallback.ts        # Intelligent error classification (isEligibleForFallback)
 ```
 
 ### When Fallback Triggers (`isEligibleForFallback`)

@@ -26,8 +26,8 @@ import { Badge } from "./ui/badge";
 
 export type ProcessingStageId =
   | "uploading"
+  | "extracting"
   | "analyzing"
-  | "topics"
   | "generating"
   | "validating"
   | "preparing";
@@ -41,26 +41,26 @@ interface ProcessingStageInfo {
 export const PROCESSING_STAGES: ProcessingStageInfo[] = [
   {
     id: "uploading",
-    label: "Uploading material",
-    description: "Checking file structure, pages, and readability...",
+    label: "Uploading document",
+    description: "Checking file structure, size, and readability...",
+  },
+  {
+    id: "extracting",
+    label: "Extracting text",
+    description:
+      "Extracting selectable text from every page while preserving page numbers...",
   },
   {
     id: "analyzing",
-    label: "Reading and analysing document",
+    label: "Analysing study material",
     description:
-      "Gemini is reading every page, diagram, and definition from start to finish...",
-  },
-  {
-    id: "topics",
-    label: "Identifying topics",
-    description:
-      "Building a full-document topic coverage plan so nothing examinable is missed...",
+      "Building a full-document topic coverage plan so no chapter is missed...",
   },
   {
     id: "generating",
-    label: "Creating examination questions",
+    label: "Generating questions",
     description:
-      "Writing recall, comprehension, application, and analysis questions with distractors...",
+      "Writing examination-style multiple-choice questions with plausible distractors...",
   },
   {
     id: "validating",
@@ -70,7 +70,7 @@ export const PROCESSING_STAGES: ProcessingStageInfo[] = [
   },
   {
     id: "preparing",
-    label: "Preparing your revision deck",
+    label: "Preparing revision deck",
     description: "Saving flashcards and initializing your revision queue...",
   },
 ];
@@ -569,8 +569,9 @@ export function DeckCreator({
                       </span>
                     </p>
                     <p className="mt-1.5 max-w-sm text-xs text-muted-foreground">
-                      Supports slides, textbooks, handouts, tables & diagrams up
-                      to 20 MB. No setup needed—AI detects topics automatically.
+                      Supports lecture slides, study guides & textbooks up to 20
+                      MB. Text is extracted page-by-page and topics are detected
+                      automatically.
                     </p>
                   </div>
                 )}

@@ -1,6 +1,9 @@
 import { computeContentHash, GenerationStageCallback } from "../gemini/service";
 import { InsufficientMaterialError } from "../gemini/client";
-import { validateAndPreparePdf } from "../gemini/pdf-processor";
+import {
+  extractPdfText,
+  ExtractedPdfChunk,
+} from "../pdf/extract-text";
 import { GeneratedDeckPayload } from "./schemas/deck-schema";
 import { AIMetadata } from "../schemas/study";
 import { isEligibleForFallback } from "./fallback";
@@ -15,11 +18,16 @@ export interface AIDeckGenerationResult {
 }
 
 export interface AIProviderAdapter {
-  name: "gemini" | "openrouter";
+  name: "gemini" | "openrouter" | string;
   generateFromText: (
     text: string
   ) => Promise<{ payload: GeneratedDeckPayload; modelUsed: string }>;
-  generateFromPdf: (
+  generateFromChunks?: (params: {
+    chunks: ExtractedPdfChunk[];
+    fileName?: string;
+    totalPages?: number;
+  }) => Promise<{ payload: GeneratedDeckPayload; modelUsed: string }>;
+  generateFromPdf?: (
     pdfBuffer: Buffer,
     fileName: string
   ) => Promise<{ payload: GeneratedDeckPayload; modelUsed: string }>;
@@ -48,7 +56,7 @@ export function clearAIServiceCache(): void {
  *    - If NOT eligible (401 invalid API key, 400 malformed request, invalid input, unsupported model config),
  *      rethrows the error immediately without calling OpenRouter.
  *    - If eligible (429 quota/rate limit, 500/503 temporary unavailability), logs a warning and
- *      executes the task using OpenRouter (FALLBACK).
+ *      executes the task using OpenRouter (FALLBACK) or any additional configured fallback providers.
  * 4. Records full `aiMetadata` (`primaryProvider`, `actualProvider`, `model`, `fallbackUsed`, `generatedAt`).
  */
 export async function executeAIRequest(params: {
@@ -59,10 +67,14 @@ export async function executeAIRequest(params: {
   startTimeMs?: number;
   primary?: AIProviderAdapter;
   fallback?: AIProviderAdapter;
+  additionalProviders?: AIProviderAdapter[];
 }): Promise<AIDeckGenerationResult> {
   const startTime = params.startTimeMs ?? Date.now();
   const primary = params.primary ?? geminiProvider;
-  const fallback = params.fallback ?? openRouterProvider;
+  const fallbackList: AIProviderAdapter[] = [
+    params.fallback ?? openRouterProvider,
+    ...(params.additionalProviders ?? []),
+  ];
 
   try {
     const primaryRes = await params.task(primary);
@@ -75,7 +87,8 @@ export async function executeAIRequest(params: {
       generationDurationMs: duration,
       aiMetadata: {
         primaryProvider: "gemini",
-        actualProvider: "gemini",
+        actualProvider:
+          primary.name === "openrouter" ? "openrouter" : "gemini",
         model: primaryRes.modelUsed,
         modelUsed: primaryRes.modelUsed,
         fallbackUsed: false,
@@ -91,43 +104,50 @@ export async function executeAIRequest(params: {
 
     console.warn("Gemini unavailable. Switching to OpenRouter.");
 
-    try {
-      const fallbackRes = await params.task(fallback);
-      const duration = Date.now() - startTime;
-      const nowIso = new Date().toISOString();
+    let lastFallbackError: unknown = geminiError;
 
-      return {
-        payload: fallbackRes.payload,
-        contentHash: params.contentHash,
-        generationDurationMs: duration,
-        aiMetadata: {
-          primaryProvider: "gemini",
-          actualProvider: "openrouter",
-          model: fallbackRes.modelUsed,
-          modelUsed: fallbackRes.modelUsed,
-          fallbackUsed: true,
-          generatedAt: nowIso,
+    for (const fbProvider of fallbackList) {
+      try {
+        const fallbackRes = await params.task(fbProvider);
+        const duration = Date.now() - startTime;
+        const nowIso = new Date().toISOString();
+
+        return {
+          payload: fallbackRes.payload,
           contentHash: params.contentHash,
           generationDurationMs: duration,
-        },
-      };
-    } catch (openRouterError: unknown) {
-      const geminiMsg =
-        geminiError instanceof Error ? geminiError.message : String(geminiError);
-      const orMsg =
-        openRouterError instanceof Error
-          ? openRouterError.message
-          : String(openRouterError);
-
-      console.error(
-        "[AI Fallback Error] Both Gemini and OpenRouter failed:",
-        { geminiMsg, orMsg }
-      );
-
-      throw new Error(
-        "AI study quota is temporarily full. Your notes are saved—please try again in a minute, or practise with the Sample Deck below."
-      );
+          aiMetadata: {
+            primaryProvider: "gemini",
+            actualProvider:
+              fbProvider.name === "gemini" ? "gemini" : "openrouter",
+            model: fallbackRes.modelUsed,
+            modelUsed: fallbackRes.modelUsed,
+            fallbackUsed: true,
+            generatedAt: nowIso,
+            contentHash: params.contentHash,
+            generationDurationMs: duration,
+          },
+        };
+      } catch (fbErr: unknown) {
+        lastFallbackError = fbErr;
+      }
     }
+
+    const geminiMsg =
+      geminiError instanceof Error ? geminiError.message : String(geminiError);
+    const orMsg =
+      lastFallbackError instanceof Error
+        ? lastFallbackError.message
+        : String(lastFallbackError);
+
+    console.error("[AI Fallback Error] All configured AI providers failed:", {
+      geminiMsg,
+      orMsg,
+    });
+
+    throw new Error(
+      "AI study quota is temporarily full. Your notes are saved—please try again in a minute, or practise with the Sample Deck below."
+    );
   }
 }
 
@@ -141,6 +161,7 @@ export async function generateDeckFromTextWithFallback(
   customProviders?: {
     primary?: AIProviderAdapter;
     fallback?: AIProviderAdapter;
+    additionalProviders?: AIProviderAdapter[];
   }
 ): Promise<AIDeckGenerationResult> {
   const cleanedText = rawText.trim();
@@ -174,11 +195,12 @@ export async function generateDeckFromTextWithFallback(
   }
 
   const promise = (async () => {
-    onStage?.("analyzing", "Reading and analysing your study notes...");
+    onStage?.("analyzing", "Analysing study material...");
     const result = await executeAIRequest({
       contentHash,
       primary: customProviders?.primary,
       fallback: customProviders?.fallback,
+      additionalProviders: customProviders?.additionalProviders,
       task: (provider) => provider.generateFromText(cleanedText),
     });
 
@@ -204,7 +226,14 @@ export async function generateDeckFromTextWithFallback(
 }
 
 /**
- * Generates an Exam Revision Deck from a PDF Buffer with Gemini Primary -> OpenRouter Fallback.
+ * Shared PDF Processing & AI Generation Pipeline:
+ *
+ * 1. Extracts all selectable text from the uploaded PDF ONCE using `extractPdfText` (`pdfjs-dist`).
+ * 2. Preserves page boundaries (`PAGE 1:`, `PAGE 2:`, ...) and splits large documents into chunks.
+ * 3. Passes the exact same extracted text/chunks to the AI provider system:
+ *    - Primary: Google Gemini
+ *    - Fallback: OpenRouter (reusing the already-extracted text without re-reading the PDF)
+ *    - Any additional configured providers
  */
 export async function generateDeckFromPdfWithFallback(
   pdfBuffer: Buffer,
@@ -214,12 +243,15 @@ export async function generateDeckFromPdfWithFallback(
   customProviders?: {
     primary?: AIProviderAdapter;
     fallback?: AIProviderAdapter;
+    additionalProviders?: AIProviderAdapter[];
   }
 ): Promise<AIDeckGenerationResult> {
-  // Always validate PDF structure upfront before calling any AI provider
-  await validateAndPreparePdf(pdfBuffer, fileName, "application/pdf");
+  onStage?.("uploading", "Extracting text from PDF document...");
 
-  const contentHash = computeContentHash(pdfBuffer);
+  // 1. Extract PDF text ONCE before invoking any AI provider
+  const extractedPdf = await extractPdfText(pdfBuffer, { fileName });
+
+  const contentHash = computeContentHash(extractedPdf.fullText);
   const jobKey = idempotencyKey || `ai_pdf_${contentHash}`;
 
   if (!customProviders) {
@@ -235,12 +267,31 @@ export async function generateDeckFromPdfWithFallback(
   }
 
   const promise = (async () => {
-    onStage?.("analyzing", "Reading and analysing PDF document...");
+    onStage?.("analyzing", "Analysing study material...");
+
+    // 2. Pass the shared extracted text/chunks to whichever provider the AI service selects
     const result = await executeAIRequest({
       contentHash,
       primary: customProviders?.primary,
       fallback: customProviders?.fallback,
-      task: (provider) => provider.generateFromPdf(pdfBuffer, fileName),
+      additionalProviders: customProviders?.additionalProviders,
+      task: async (provider) => {
+        if (provider.generateFromChunks && extractedPdf.chunks.length > 1) {
+          return provider.generateFromChunks({
+            chunks: extractedPdf.chunks,
+            fileName: extractedPdf.fileName,
+            totalPages: extractedPdf.totalPages,
+          });
+        }
+        if (provider.generateFromChunks && extractedPdf.chunks.length === 1) {
+          return provider.generateFromChunks({
+            chunks: extractedPdf.chunks,
+            fileName: extractedPdf.fileName,
+            totalPages: extractedPdf.totalPages,
+          });
+        }
+        return provider.generateFromText(extractedPdf.fullText);
+      },
     });
 
     if (!customProviders) {

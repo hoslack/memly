@@ -14,6 +14,10 @@ import {
   validateAndPreparePdf,
 } from "./pdf-processor";
 import {
+  extractPdfText,
+  ExtractedPdfChunk,
+} from "../pdf/extract-text";
+import {
   DOCUMENT_ANALYSIS_SYSTEM_INSTRUCTION,
   buildDocumentAnalysisPrompt,
 } from "../prompts/document-analysis";
@@ -324,7 +328,153 @@ export async function generateQuestionsForMaterial(params: {
 }
 
 /**
+ * Generates an Exam Revision Deck using Gemini from pre-extracted normalized chunks
+ * (shared across all AI providers so PDF extraction happens only once per upload).
+ */
+export async function generateDeckWithGeminiFromChunks(params: {
+  chunks: ExtractedPdfChunk[];
+  fileName?: string;
+  totalPages?: number;
+  onStage?: GenerationStageCallback;
+}): Promise<{ payload: GeneratedDeckPayload; modelUsed: string }> {
+  const { chunks, fileName, totalPages, onStage } = params;
+
+  onStage?.("analyzing", "Analysing study material...");
+
+  const sectionAnalyses: DocumentAnalysis[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const rangeLabel =
+      chunks.length > 1
+        ? `Pages ${chunk.startPage} to ${chunk.endPage}${
+            totalPages ? ` of ${totalPages}` : ""
+          } (Chunk ${i + 1} of ${chunks.length})`
+        : totalPages
+        ? `Pages 1 to ${totalPages}`
+        : `Section 1`;
+
+    const part: Part = {
+      text: `SOURCE LEARNING MATERIAL (${rangeLabel}):\n\n${chunk.text}`,
+    };
+
+    const analysis = await analyzeDocumentContent([part], {
+      fileName,
+      pageRangeLabel: rangeLabel,
+      totalPages,
+    });
+    sectionAnalyses.push(analysis);
+  }
+
+  onStage?.("topics", "Identifying key exam topics and subtopics...");
+  const unifiedAnalysis = await consolidateSectionAnalyses(sectionAnalyses);
+
+  onStage?.(
+    "generating",
+    `Generating examination questions across ${unifiedAnalysis.topics.length} topics...`
+  );
+
+  let allRawQuestions: unknown[] = [];
+  const collectedStems: string[] = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const rangeLabel =
+      chunks.length > 1
+        ? `Pages ${chunk.startPage}-${chunk.endPage} (Chunk ${i + 1} of ${
+            chunks.length
+          })`
+        : totalPages
+        ? `Pages 1-${totalPages}`
+        : `Section 1`;
+
+    const part: Part = {
+      text: `SOURCE LEARNING MATERIAL (${rangeLabel}):\n\n${chunk.text}`,
+    };
+
+    const rawBatch = await generateQuestionsForMaterial({
+      contentParts: [part],
+      analysis: unifiedAnalysis,
+      targetTopics: sectionAnalyses[i].topics,
+      targetQuestionCount:
+        chunks.length === 1
+          ? unifiedAnalysis.recommendedQuestionCount
+          : Math.max(8, Math.min(25, sectionAnalyses[i].recommendedQuestionCount)),
+      existingQuestionStems: collectedStems,
+      sectionContext: rangeLabel,
+    });
+
+    allRawQuestions.push(...rawBatch);
+    for (const q of rawBatch) {
+      if (
+        q &&
+        typeof q === "object" &&
+        "question" in q &&
+        typeof (q as { question: unknown }).question === "string"
+      ) {
+        collectedStems.push((q as { question: string }).question);
+      }
+    }
+  }
+
+  onStage?.("validating", "Checking questions and answers...");
+
+  let validation = validateAndDeduplicateQuestions(
+    allRawQuestions,
+    unifiedAnalysis.topics
+  );
+
+  if (
+    validation.uncoveredTopics.length > 0 &&
+    validation.coverageRatio < 0.75 &&
+    chunks.length === 1
+  ) {
+    const missingTopicItems = unifiedAnalysis.topics.filter((t) =>
+      validation.uncoveredTopics.includes(t.name)
+    );
+    if (missingTopicItems.length > 0) {
+      const topUpRaw = await generateQuestionsForMaterial({
+        contentParts: [
+          { text: `SOURCE LEARNING MATERIAL:\n\n${chunks[0].text}` },
+        ],
+        analysis: unifiedAnalysis,
+        targetTopics: missingTopicItems,
+        targetQuestionCount: missingTopicItems.length * 2,
+        existingQuestionStems: validation.validQuestions.map((q) => q.question),
+      });
+      allRawQuestions = [...validation.validQuestions, ...topUpRaw];
+      validation = validateAndDeduplicateQuestions(
+        allRawQuestions,
+        unifiedAnalysis.topics
+      );
+    }
+  }
+
+  if (validation.validQuestions.length === 0) {
+    throw new Error(
+      "No valid multiple-choice questions could be verified from the study material. Please try uploading clearer study notes."
+    );
+  }
+
+  onStage?.("preparing", "Preparing revision deck...");
+
+  const payload: GeneratedDeckPayload = GeneratedDeckPayloadSchema.parse({
+    deckTitle: unifiedAnalysis.deckTitle,
+    subject: unifiedAnalysis.subject,
+    description: unifiedAnalysis.description,
+    topics: unifiedAnalysis.topics,
+    questions: validation.validQuestions,
+  });
+
+  return {
+    payload,
+    modelUsed: getGeminiModelName(),
+  };
+}
+
+/**
  * Complete pipeline for generating an Exam Revision Deck from a PDF Buffer.
+ * Uses the shared PDF text extraction pipeline (`extractPdfText`) and passes
+ * the extracted text to Gemini.
  */
 export async function generateDeckFromPdf(
   pdfBuffer: Buffer,
@@ -335,13 +485,11 @@ export async function generateDeckFromPdf(
   const contentHash = computeContentHash(pdfBuffer);
   const jobKey = idempotencyKey || `pdf_${contentHash}`;
 
-  // Check cache first
   const cached = generationCache.get(contentHash);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached.result;
   }
 
-  // Check in-flight idempotency
   const existingJob = inFlightJobs.get(jobKey);
   if (existingJob) {
     return existingJob;
@@ -349,166 +497,30 @@ export async function generateDeckFromPdf(
 
   const jobPromise = (async (): Promise<GenerateDeckResult> => {
     const startTime = Date.now();
-    onStage?.("uploading", "Validating PDF integrity and structure...");
+    onStage?.("uploading", "Extracting text from PDF document...");
 
-    const pdfInfo = await validateAndPreparePdf(
-      pdfBuffer,
-      fileName,
-      "application/pdf"
-    );
+    const extracted = await extractPdfText(pdfBuffer, { fileName });
 
-    const cleanups: Array<() => Promise<void>> = [];
+    const { payload, modelUsed } = await generateDeckWithGeminiFromChunks({
+      chunks: extracted.chunks,
+      fileName: extracted.fileName,
+      totalPages: extracted.totalPages,
+      onStage,
+    });
 
-    try {
-      onStage?.(
-        "analyzing",
-        `Reading and analysing ${pdfInfo.pageCount}-page document...`
-      );
+    const result: GenerateDeckResult = {
+      payload,
+      modelUsed,
+      contentHash,
+      generationDurationMs: Date.now() - startTime,
+    };
 
-      const sectionParts: Part[] = [];
-      const sectionAnalyses: DocumentAnalysis[] = [];
+    generationCache.set(contentHash, {
+      timestamp: Date.now(),
+      result,
+    });
 
-      for (const section of pdfInfo.sections) {
-        const rangeLabel =
-          pdfInfo.sections.length > 1
-            ? `Pages ${section.startPage} to ${section.endPage} of ${pdfInfo.pageCount}`
-            : `Pages 1 to ${pdfInfo.pageCount}`;
-
-        const { part, cleanup } = await preparePdfPartForGemini(
-          section.buffer,
-          `${fileName} (${rangeLabel})`
-        );
-        cleanups.push(cleanup);
-        sectionParts.push(part);
-
-        const analysis = await analyzeDocumentContent([part], {
-          fileName,
-          pageRangeLabel: rangeLabel,
-          totalPages: pdfInfo.pageCount,
-        });
-        sectionAnalyses.push(analysis);
-      }
-
-      onStage?.("topics", "Building consolidated topic coverage plan...");
-      const unifiedAnalysis = await consolidateSectionAnalyses(sectionAnalyses);
-
-      onStage?.(
-        "generating",
-        `Creating examination questions across ${unifiedAnalysis.topics.length} topics...`
-      );
-
-      let allRawQuestions: unknown[] = [];
-      const collectedStems: string[] = [];
-
-      if (pdfInfo.sections.length === 1) {
-        const rawBatch = await generateQuestionsForMaterial({
-          contentParts: [sectionParts[0]],
-          analysis: unifiedAnalysis,
-          targetQuestionCount: unifiedAnalysis.recommendedQuestionCount,
-        });
-        allRawQuestions.push(...rawBatch);
-      } else {
-        // Multi-section generation for large PDFs
-        for (let i = 0; i < pdfInfo.sections.length; i++) {
-          const section = pdfInfo.sections[i];
-          const secAnalysis = sectionAnalyses[i];
-          const rangeLabel = `Pages ${section.startPage}-${section.endPage}`;
-
-          const rawBatch = await generateQuestionsForMaterial({
-            contentParts: [sectionParts[i]],
-            analysis: unifiedAnalysis,
-            targetTopics: secAnalysis.topics,
-            targetQuestionCount: Math.max(
-              8,
-              Math.min(25, secAnalysis.recommendedQuestionCount)
-            ),
-            existingQuestionStems: collectedStems,
-            sectionContext: rangeLabel,
-          });
-
-          allRawQuestions.push(...rawBatch);
-          for (const q of rawBatch) {
-            if (
-              q &&
-              typeof q === "object" &&
-              "question" in q &&
-              typeof (q as { question: unknown }).question === "string"
-            ) {
-              collectedStems.push((q as { question: string }).question);
-            }
-          }
-        }
-      }
-
-      onStage?.(
-        "validating",
-        "Checking questions, answers, distractors, and topic coverage..."
-      );
-
-      let validation = validateAndDeduplicateQuestions(
-        allRawQuestions,
-        unifiedAnalysis.topics
-      );
-
-      // If any topics were uncovered and we have a single-section doc, perform a targeted top-up pass
-      if (
-        validation.uncoveredTopics.length > 0 &&
-        validation.coverageRatio < 0.75 &&
-        sectionParts.length > 0
-      ) {
-        const missingTopicItems = unifiedAnalysis.topics.filter((t) =>
-          validation.uncoveredTopics.includes(t.name)
-        );
-        if (missingTopicItems.length > 0) {
-          const topUpRaw = await generateQuestionsForMaterial({
-            contentParts: [sectionParts[0]],
-            analysis: unifiedAnalysis,
-            targetTopics: missingTopicItems,
-            targetQuestionCount: missingTopicItems.length * 2,
-            existingQuestionStems: validation.validQuestions.map(
-              (q) => q.question
-            ),
-          });
-          allRawQuestions = [...validation.validQuestions, ...topUpRaw];
-          validation = validateAndDeduplicateQuestions(
-            allRawQuestions,
-            unifiedAnalysis.topics
-          );
-        }
-      }
-
-      if (validation.validQuestions.length === 0) {
-        throw new Error(
-          "No valid multiple-choice questions could be verified from the document. Please try uploading clearer study notes."
-        );
-      }
-
-      onStage?.("preparing", "Preparing your revision deck...");
-
-      const payload: GeneratedDeckPayload = GeneratedDeckPayloadSchema.parse({
-        deckTitle: unifiedAnalysis.deckTitle,
-        subject: unifiedAnalysis.subject,
-        description: unifiedAnalysis.description,
-        topics: unifiedAnalysis.topics,
-        questions: validation.validQuestions,
-      });
-
-      const result: GenerateDeckResult = {
-        payload,
-        modelUsed: getGeminiModelName(),
-        contentHash,
-        generationDurationMs: Date.now() - startTime,
-      };
-
-      generationCache.set(contentHash, {
-        timestamp: Date.now(),
-        result,
-      });
-
-      return result;
-    } finally {
-      await Promise.allSettled(cleanups.map((fn) => fn()));
-    }
+    return result;
   })();
 
   inFlightJobs.set(jobKey, jobPromise);

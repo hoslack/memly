@@ -1,11 +1,13 @@
 import {
   generateDeckFromPdf as geminiGenerateDeckFromPdf,
   generateDeckFromText as geminiGenerateDeckFromText,
+  generateDeckWithGeminiFromChunks,
   analyzeDocumentContent,
   generateQuestionsForMaterial,
 } from "../../gemini/service";
 import { getGeminiModelName } from "../../gemini/client";
 import { GeneratedDeckPayload } from "../schemas/deck-schema";
+import { ExtractedPdfChunk } from "../../pdf/extract-text";
 
 export async function executeGeminiTextPipeline(
   rawText: string
@@ -18,6 +20,14 @@ export async function executeGeminiTextPipeline(
     payload: result.payload,
     modelUsed: result.modelUsed || getGeminiModelName(),
   };
+}
+
+export async function executeGeminiChunksPipeline(params: {
+  chunks: ExtractedPdfChunk[];
+  fileName?: string;
+  totalPages?: number;
+}): Promise<{ payload: GeneratedDeckPayload; modelUsed: string }> {
+  return generateDeckWithGeminiFromChunks(params);
 }
 
 export async function executeGeminiPdfPipeline(
@@ -38,6 +48,7 @@ export async function executeGeminiPdfPipeline(
 export const geminiProvider = {
   name: "gemini" as const,
   generateFromText: executeGeminiTextPipeline,
+  generateFromChunks: executeGeminiChunksPipeline,
   generateFromPdf: executeGeminiPdfPipeline,
   analyzeDocumentContent,
   generateQuestionsForMaterial,
