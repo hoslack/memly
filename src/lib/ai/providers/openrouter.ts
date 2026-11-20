@@ -111,6 +111,22 @@ export function getOpenRouterModelName(): string {
     : DEFAULT_OPENROUTER_MODEL;
 }
 
+function resolveOpenRouterSiteUrl(): string {
+  const configured = process.env.OPENROUTER_SITE_URL?.trim();
+  if (configured && !configured.includes("localhost")) {
+    return configured;
+  }
+  const vercelProdUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (vercelProdUrl) {
+    return `https://${vercelProdUrl}`;
+  }
+  const vercelUrl = process.env.VERCEL_URL?.trim();
+  if (vercelUrl) {
+    return `https://${vercelUrl}`;
+  }
+  return configured || "http://localhost:3000";
+}
+
 export function getOpenRouterApiKey(): string {
   if (typeof window !== "undefined") {
     throw new Error(
@@ -174,10 +190,9 @@ export async function callOpenRouterJson(params: {
 }): Promise<OpenRouterCompletionResult> {
   const apiKey = getOpenRouterApiKey();
   const candidateModels = await getAllAvailableFreeOpenRouterModels();
-  const siteUrl =
-    process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost:3000";
+  const siteUrl = resolveOpenRouterSiteUrl();
   const appName =
-    process.env.OPENROUTER_APP_NAME?.trim() || "Exam Revision App";
+    process.env.OPENROUTER_APP_NAME?.trim() || "Memly Exam Revision App";
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
@@ -209,11 +224,20 @@ export async function callOpenRouterJson(params: {
       body.response_format = { type: "json_object" };
     }
 
-    const res = await fetch(OPENROUTER_API_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 14000);
+
+    let res: Response;
+    try {
+      res = await fetch(OPENROUTER_API_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");

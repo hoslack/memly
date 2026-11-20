@@ -169,9 +169,9 @@ async function generateStructuredContentWithFallback(params: {
               setTimeout(
                 () =>
                   reject(
-                    new Error(`503 TIMEOUT: ${modelName} exceeded 18s limit`)
+                    new Error(`503 TIMEOUT: ${modelName} exceeded 9s limit`)
                   ),
-                18000
+                9000
               )
             ),
           ]),
@@ -199,8 +199,8 @@ async function generateStructuredContentWithFallback(params: {
       if (!isModelUnavailable) {
         throw err;
       }
-      // If we've already spent > 22 seconds trying primary Gemini models, break so OpenRouter free models have plenty of time
-      if (Date.now() - startTime > 22000) {
+      // Spend at most 11 seconds trying Gemini before handing off to OpenRouter so Vercel never times out
+      if (Date.now() - startTime > 11000) {
         break;
       }
     }
