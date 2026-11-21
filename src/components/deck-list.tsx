@@ -137,15 +137,17 @@ export function DeckList() {
                         <Info className="h-4 w-4" />
                       </Button>
                     </Link>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Delete ${deck.title}`}
-                      onClick={(e) => handleDelete(deck.id, e)}
-                      className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {deck.userId === user.uid && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Delete ${deck.title}`}
+                        onClick={(e) => handleDelete(deck.id, e)}
+                        className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 

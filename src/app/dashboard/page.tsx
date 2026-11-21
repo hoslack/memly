@@ -76,10 +76,10 @@ export default function DashboardPage() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold tracking-tight text-foreground">
-            Saved Decks
+            All Available Decks
           </h2>
           <Badge variant="secondary" className="text-xs">
-            Auto-saved progress
+            Personal progress auto-saved
           </Badge>
         </div>
         <DeckList />

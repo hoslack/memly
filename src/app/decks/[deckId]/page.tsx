@@ -183,16 +183,18 @@ export default function DeckDetailsPage() {
                   <span>Restart Queue</span>
                 </Button>
               )}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Delete deck"
-                onClick={handleDelete}
-                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              {deck.userId === user.uid && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Delete deck"
+                  onClick={handleDelete}
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
             </div>
           </div>
 

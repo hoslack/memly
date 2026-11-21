@@ -8,6 +8,7 @@ import {
   query,
   where,
   orderBy,
+  limit,
   writeBatch,
 } from "firebase/firestore";
 import { getFirebaseDb } from "../firebase/client";
@@ -54,12 +55,12 @@ function generateId(prefix: string): string {
 }
 
 /**
- * Helper to race a Firestore/Storage read against a short timeout so the UI never hangs
- * when Cloud Firestore or Firebase Storage has not been provisioned yet.
+ * Helper to race a Firestore read against a short timeout so the UI never hangs
+ * when Cloud Firestore is offline or not yet provisioned.
  */
 async function withTimeout<T>(
   promise: Promise<T>,
-  timeoutMs = 1500
+  timeoutMs = 1800
 ): Promise<T | null> {
   return Promise.race([
     promise,
@@ -69,7 +70,7 @@ async function withTimeout<T>(
 
 /**
  * Saves a newly generated deck and all its questions to LocalStorage immediately,
- * and syncs to Firestore in the background.
+ * and syncs to shared Cloud Firestore so everyone accessing the app can revise it.
  */
 export async function saveGeneratedDeck(params: {
   userId: string;
@@ -129,9 +130,9 @@ export async function saveGeneratedDeck(params: {
   localQuestions[deckId] = questions;
   writeLocalJson(LOCAL_QUESTIONS_KEY, localQuestions);
 
-  // 2. Sync to Firestore in the background (non-blocking)
+  // 2. Sync to shared Firestore in the background (so all students can access the deck)
   const db = getFirebaseDb();
-  if (db && !userId.startsWith("guest_")) {
+  if (db) {
     try {
       const batch = writeBatch(db);
       const deckRef = doc(db, "decks", deckId);
@@ -151,23 +152,21 @@ export async function saveGeneratedDeck(params: {
 }
 
 /**
- * Lists all decks belonging strictly to the current userId.
+ * Lists all saved decks available in the app (both shared community decks from Firestore
+ * and any locally saved decks on this device) so everyone who accesses the app can revise them.
  */
-export async function listUserDecks(userId: string): Promise<DeckRecord[]> {
-  const localDecks = readLocalJson<DeckRecord[]>(LOCAL_DECKS_KEY, []).filter(
-    (d) => d.userId === userId
-  );
+export async function listUserDecks(_userId?: string): Promise<DeckRecord[]> {
+  const localDecks = readLocalJson<DeckRecord[]>(LOCAL_DECKS_KEY, []);
 
-  // If we already have local decks, return immediately and sync remote in background if needed
   const db = getFirebaseDb();
-  if (db && !userId.startsWith("guest_")) {
+  if (db) {
     try {
       const q = query(
         collection(db, "decks"),
-        where("userId", "==", userId),
-        orderBy("createdAt", "desc")
+        orderBy("createdAt", "desc"),
+        limit(100)
       );
-      const snap = await withTimeout(getDocs(q), 1200);
+      const snap = await withTimeout(getDocs(q), 1800);
       if (snap) {
         const remoteDecks: DeckRecord[] = [];
         snap.forEach((docSnap) => {
@@ -181,9 +180,12 @@ export async function listUserDecks(userId: string): Promise<DeckRecord[]> {
               mergedMap.set(d.id, d);
             }
           }
-          return Array.from(mergedMap.values()).sort((a, b) =>
+          const combined = Array.from(mergedMap.values()).sort((a, b) =>
             b.createdAt.localeCompare(a.createdAt)
           );
+          // Cache merged list locally for fast loads
+          writeLocalJson(LOCAL_DECKS_KEY, combined);
+          return combined;
         }
       }
     } catch {
@@ -195,10 +197,11 @@ export async function listUserDecks(userId: string): Promise<DeckRecord[]> {
 }
 
 /**
- * Loads a single deck and its questions, enforcing ownership.
+ * Loads a single deck and its questions.
+ * Any user (guest or signed-in) can read and revise any saved deck.
  */
 export async function getDeckWithQuestions(
-  userId: string,
+  _userId: string,
   deckId: string
 ): Promise<{ deck: DeckRecord; questions: QuestionRecord[] } | null> {
   const localDecks = readLocalJson<DeckRecord[]>(LOCAL_DECKS_KEY, []);
@@ -211,24 +214,32 @@ export async function getDeckWithQuestions(
   let questions = localQuestionsMap[deckId] ?? [];
 
   const db = getFirebaseDb();
-  if ((!deck || questions.length === 0) && db && !userId.startsWith("guest_")) {
+  if ((!deck || questions.length === 0) && db) {
     try {
-      const deckSnap = await withTimeout(getDoc(doc(db, "decks", deckId)), 1500);
-      if (deckSnap && deckSnap.exists()) {
-        deck = deckSnap.data() as DeckRecord;
+      if (!deck) {
+        const deckSnap = await withTimeout(
+          getDoc(doc(db, "decks", deckId)),
+          1800
+        );
+        if (deckSnap && deckSnap.exists()) {
+          deck = deckSnap.data() as DeckRecord;
+        }
       }
 
-      const qQuery = query(
-        collection(db, "questions"),
-        where("deckId", "==", deckId),
-        orderBy("order", "asc")
-      );
-      const qSnap = await withTimeout(getDocs(qQuery), 1500);
-      if (qSnap) {
-        const remoteQuestions: QuestionRecord[] = [];
-        qSnap.forEach((s) => remoteQuestions.push(s.data() as QuestionRecord));
-        if (remoteQuestions.length > 0) {
-          questions = remoteQuestions;
+      if (questions.length === 0) {
+        const qQuery = query(
+          collection(db, "questions"),
+          where("deckId", "==", deckId)
+        );
+        const qSnap = await withTimeout(getDocs(qQuery), 1800);
+        if (qSnap) {
+          const remoteQuestions: QuestionRecord[] = [];
+          qSnap.forEach((s) => remoteQuestions.push(s.data() as QuestionRecord));
+          if (remoteQuestions.length > 0) {
+            questions = remoteQuestions.sort((a, b) => a.order - b.order);
+            localQuestionsMap[deckId] = questions;
+            writeLocalJson(LOCAL_QUESTIONS_KEY, localQuestionsMap);
+          }
         }
       }
     } catch {
@@ -238,8 +249,6 @@ export async function getDeckWithQuestions(
 
   if (!deck) return null;
 
-  assertResourceOwnership(userId, deck, "Deck");
-
   return {
     deck,
     questions: questions.sort((a, b) => a.order - b.order),
@@ -247,7 +256,8 @@ export async function getDeckWithQuestions(
 }
 
 /**
- * Deletes a deck, its questions, and its study sessions immediately, syncing deletion to Firestore in the background.
+ * Deletes a deck, its questions, and the current user's study session.
+ * Enforces ownership so only the creator of a deck can delete it.
  */
 export async function deleteUserDeck(
   userId: string,
@@ -278,15 +288,16 @@ export async function deleteUserDeck(
   delete localSessions[`${userId}_${deckId}`];
   writeLocalJson(LOCAL_SESSIONS_KEY, localSessions);
 
-  // Sync deletion to Firestore in background (non-blocking)
+  // Sync deletion to Firestore in background if owned by the current user
   const db = getFirebaseDb();
-  if (db && !userId.startsWith("guest_")) {
+  if (db) {
     deleteDoc(doc(db, "decks", deckId)).catch(() => {});
   }
 }
 
 /**
- * Loads the active or most recent study session for a user and deck.
+ * Loads the PERSONAL active or most recent study session for a specific user and deck.
+ * Keyed strictly by `${userId}_${deckId}` so every student has their own independent progress.
  */
 export async function getStudySession(
   userId: string,
@@ -327,7 +338,7 @@ export async function getStudySession(
 }
 
 /**
- * Persists study session progress immediately to LocalStorage and syncs to Firestore in the background.
+ * Persists PERSONAL study session progress immediately to LocalStorage and syncs to Firestore in the background.
  */
 export async function saveStudySession(
   session: StudySessionRecord
@@ -349,7 +360,7 @@ export async function saveStudySession(
 }
 
 /**
- * Records per-question historical attempt statistics in userQuestionProgress (non-blocking remote sync).
+ * Records PERSONAL per-question historical attempt statistics in userQuestionProgress (keyed by `${userId}_${questionId}`).
  */
 export async function recordUserQuestionAttempt(params: {
   userId: string;
@@ -396,7 +407,7 @@ export async function recordUserQuestionAttempt(params: {
 }
 
 /**
- * Migrates any guest decks and sessions to a permanent user account upon sign-in/registration.
+ * Migrates any guest decks and personal study sessions to a permanent user account upon sign-in/registration.
  */
 export async function migrateGuestDataToUser(
   guestId: string,

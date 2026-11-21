@@ -55,10 +55,10 @@ export default function HomePage() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold tracking-tight text-foreground">
-              Your Revision Decks
+              Available Revision Decks
             </h2>
             <p className="text-xs text-muted-foreground">
-              Pick up right where you left off
+              Shared decks available to everyone — with your own personal progress
             </p>
           </div>
           <Link
