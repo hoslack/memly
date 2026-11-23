@@ -23,7 +23,7 @@ export default function DashboardPage() {
             </h1>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Upload your notes and let AI prepare you for your exams.
+            Import ready-made JSON or CSV exam questions and start revising.
           </p>
         </div>
 
@@ -37,7 +37,7 @@ export default function DashboardPage() {
             {showCreator ? (
               <>
                 <X className="h-4 w-4" />
-                <span>Close Upload</span>
+                <span>Close Import</span>
               </>
             ) : (
               <>

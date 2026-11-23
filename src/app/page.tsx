@@ -17,7 +17,7 @@ export default function HomePage() {
           className="mb-3 gap-1.5 px-3 py-1 text-xs font-semibold"
         >
           <Sparkles className="h-3.5 w-3.5" />
-          <span>Upload your notes. Start answering questions.</span>
+          <span>Import your questions. Start revising immediately.</span>
         </Badge>
 
         <h1 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-5xl">
@@ -25,14 +25,15 @@ export default function HomePage() {
         </h1>
 
         <p className="mx-auto mt-3 max-w-xl text-base text-muted-foreground sm:text-lg">
-          Upload your notes and let AI prepare you for your exams.
+          Paste ready-made JSON or CSV questions to create your interactive exam
+          flashcard deck in seconds.
         </p>
 
         {/* Three-step zero-friction promise pills */}
         <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-xs font-medium text-muted-foreground">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary/70 px-3 py-1">
             <Zap className="h-3.5 w-3.5 text-primary" />
-            1. Paste JSON/CSV or upload PDF
+            1. Paste or upload JSON / CSV
           </span>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary/70 px-3 py-1">
             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />

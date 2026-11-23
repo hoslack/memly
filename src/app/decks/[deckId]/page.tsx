@@ -6,7 +6,6 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Play,
-  Trash2,
   BookOpen,
   Calendar,
   Layers,
@@ -18,7 +17,6 @@ import { useAuth } from "@/lib/auth/context";
 import {
   getDeckWithQuestions,
   getStudySession,
-  deleteUserDeck,
   saveStudySession,
 } from "@/lib/storage/repository";
 import {
@@ -70,12 +68,6 @@ export default function DeckDetailsPage() {
       active = false;
     };
   }, [params?.deckId, user?.uid]);
-
-  const handleDelete = async () => {
-    if (!deck) return;
-    await deleteUserDeck(user.uid, deck.id);
-    router.push("/dashboard");
-  };
 
   const handleResetAndRevise = async () => {
     if (!deck || questions.length === 0) return;
@@ -181,18 +173,6 @@ export default function DeckDetailsPage() {
                 >
                   <RotateCcw className="h-4 w-4" />
                   <span>Restart Queue</span>
-                </Button>
-              )}
-              {deck.userId === user.uid && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Delete deck"
-                  onClick={handleDelete}
-                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
                 </Button>
               )}
             </div>

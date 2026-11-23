@@ -20,8 +20,8 @@ export default function CreateDeckPage() {
           Create a New Revision Deck
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Paste ready-made JSON or CSV questions (zero AI credits needed), or
-          upload a PDF / study notes.
+          Paste ready-made JSON or CSV questions (or upload a .json / .csv file)
+          to create a revision deck instantly.
         </p>
       </div>
 

@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Play,
-  Trash2,
   BookOpen,
   Calendar,
   CheckCircle2,
@@ -16,7 +15,6 @@ import {
 import { useAuth } from "@/lib/auth/context";
 import {
   listUserDecks,
-  deleteUserDeck,
   getStudySession,
 } from "@/lib/storage/repository";
 import { DeckRecord, StudySessionRecord } from "@/lib/schemas/study";
@@ -58,13 +56,6 @@ export function DeckList() {
     loadDecks();
   }, [loadDecks]);
 
-  const handleDelete = async (deckId: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    await deleteUserDeck(user.uid, deckId);
-    setItems((prev) => prev.filter((item) => item.deck.id !== deckId));
-  };
-
   if (loading) {
     return (
       <div className="grid gap-4 sm:grid-cols-2">
@@ -93,8 +84,8 @@ export function DeckList() {
             No revision decks yet
           </h3>
           <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-            Upload a lecture PDF or paste your notes above, and Gemini will build your
-            first exam flashcard deck automatically.
+            Paste your JSON or CSV questions above (or upload a .json / .csv
+            file) to build your first exam flashcard deck automatically.
           </p>
         </CardContent>
       </Card>
@@ -137,17 +128,6 @@ export function DeckList() {
                         <Info className="h-4 w-4" />
                       </Button>
                     </Link>
-                    {deck.userId === user.uid && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Delete ${deck.title}`}
-                        onClick={(e) => handleDelete(deck.id, e)}
-                        className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
                   </div>
                 </div>
 
