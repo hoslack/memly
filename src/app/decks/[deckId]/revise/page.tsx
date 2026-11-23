@@ -23,17 +23,20 @@ export default function ReviseDeckPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!params?.deckId || !user?.uid || user.uid === "guest_ssr") return;
+    if (!params?.deckId) return;
     let active = true;
 
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        const res = await getDeckWithQuestions(user.uid, params.deckId);
+        const res = await getDeckWithQuestions(
+          user?.uid || "guest_public",
+          params.deckId
+        );
         if (!active) return;
         if (!res) {
-          setError("Revision deck not found or you do not have access to it.");
+          setError("Revision deck not found.");
         } else {
           setData(res);
         }

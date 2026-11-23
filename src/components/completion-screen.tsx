@@ -11,7 +11,11 @@ import {
   Clock,
   Target,
   BookOpen,
+  LogIn,
+  ShieldCheck,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth/context";
 import { DeckRecord } from "@/lib/schemas/study";
 import { RevisionQueueState, getQueueProgressMetrics } from "@/lib/revision/queue";
 import { formatDurationSeconds } from "@/lib/utils";
@@ -32,6 +36,8 @@ export function CompletionScreen({
   onReviseAgain,
   onReturnDashboard,
 }: CompletionScreenProps) {
+  const router = useRouter();
+  const { user } = useAuth();
   const metrics = getQueueProgressMetrics(queueState);
 
   return (
@@ -166,7 +172,33 @@ export function CompletionScreen({
             </div>
 
             {/* Primary Actions */}
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            {user.isGuest && (
+              <div className="mt-6 flex flex-col items-center justify-between gap-3 rounded-2xl border border-primary/30 bg-primary/5 p-4 sm:flex-row">
+                <div className="flex items-center gap-2.5 text-left text-xs sm:text-sm">
+                  <ShieldCheck className="h-5 w-5 shrink-0 text-primary" />
+                  <span className="text-foreground">
+                    Sign in to preserve your completed deck mastery permanently.
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() =>
+                    router.push(
+                      `/login?redirect=${encodeURIComponent(
+                        `/decks/${deck.id}`
+                      )}`
+                    )
+                  }
+                  className="w-full shrink-0 gap-1.5 sm:w-auto"
+                >
+                  <LogIn className="h-3.5 w-3.5" />
+                  <span>Sign in to Save</span>
+                </Button>
+              </div>
+            )}
+
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
               <Button
                 type="button"
                 size="lg"

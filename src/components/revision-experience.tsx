@@ -13,7 +13,10 @@ import {
   Lightbulb,
   Repeat,
   Keyboard,
+  LogIn,
+  ShieldCheck,
 } from "lucide-react";
+import { useAuth } from "@/lib/auth/context";
 import { DeckRecord, QuestionRecord } from "@/lib/schemas/study";
 import { OptionId } from "@/lib/schemas/deck";
 import {
@@ -49,6 +52,7 @@ export function RevisionExperience({
   questions,
 }: RevisionExperienceProps) {
   const router = useRouter();
+  const { user } = useAuth();
   const [queueState, setQueueState] = useState<RevisionQueueState | null>(null);
   const [selectedOptionId, setSelectedOptionId] = useState<OptionId | null>(
     null
@@ -57,6 +61,8 @@ export function RevisionExperience({
   const [feedbackState, setFeedbackState] = useState<
     "idle" | "correct" | "incorrect"
   >("idle");
+  const [showSignInPromptModal, setShowSignInPromptModal] = useState(false);
+  const [hasPromptedSignIn, setHasPromptedSignIn] = useState(false);
   const questionStartTimeRef = useRef<number>(Date.now());
   const autoAdvanceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -144,8 +150,14 @@ export function RevisionExperience({
           isCorrect,
         }),
       ]);
+
+      // After the guest user starts revising (answers their first question), prompt them to sign in to preserve their progress
+      if (user.isGuest && !hasPromptedSignIn && nextState.totalAttempts >= 1) {
+        setHasPromptedSignIn(true);
+        setShowSignInPromptModal(true);
+      }
     },
-    [queueState, currentQuestion, userId, deck.id]
+    [queueState, currentQuestion, userId, deck.id, user.isGuest, hasPromptedSignIn]
   );
 
   // Instant tap-to-answer handler
@@ -383,6 +395,34 @@ export function RevisionExperience({
         </div>
 
         <Progress value={metrics.progressPercentage} className="h-2" />
+
+        {/* Persistent Guest Sign-In Banner Once Revision Has Started */}
+        {user.isGuest && queueState.totalAttempts > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/25 bg-primary/5 px-3.5 py-2 text-xs">
+            <div className="flex items-center gap-2 text-foreground">
+              <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
+              <span>
+                You&apos;ve started revising! Sign in to preserve your progress.
+              </span>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              onClick={() =>
+                router.push(
+                  `/login?redirect=${encodeURIComponent(
+                    `/decks/${deck.id}/revise`
+                  )}`
+                )
+              }
+              className="h-7 gap-1.5 px-2.5 text-xs"
+            >
+              <LogIn className="h-3 w-3" />
+              <span>Sign in to Save</span>
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Center Interactive Flashcard */}
@@ -629,6 +669,82 @@ export function RevisionExperience({
           <span>Keys 1–4 or Arrows to select • Enter to confirm • Esc to exit</span>
         </div>
       </div>
+
+      {/* Sign In to Preserve Progress Modal for Guest Users After Starting Revision */}
+      <AnimatePresence>
+        {showSignInPromptModal && user.isGuest && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="save-progress-modal-title"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-md rounded-3xl border border-border bg-card p-6 text-card-foreground shadow-2xl sm:p-7"
+            >
+              <button
+                type="button"
+                onClick={() => setShowSignInPromptModal(false)}
+                aria-label="Close sign in prompt"
+                className="absolute right-4 top-4 rounded-xl p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+              <div className="flex flex-col items-center text-center">
+                <div className="mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <ShieldCheck className="h-6 w-6" />
+                </div>
+
+                <h3
+                  id="save-progress-modal-title"
+                  className="text-lg font-extrabold tracking-tight text-foreground sm:text-xl"
+                >
+                  Save your revision progress?
+                </h3>
+
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  Sign in now to preserve your current progress on{" "}
+                  <span className="font-semibold text-foreground">
+                    {deck.title}
+                  </span>{" "}
+                  so you never lose your completed questions.
+                </p>
+
+                <div className="mt-6 flex w-full flex-col gap-2.5">
+                  <Button
+                    type="button"
+                    size="lg"
+                    onClick={() =>
+                      router.push(
+                        `/login?redirect=${encodeURIComponent(
+                          `/decks/${deck.id}/revise`
+                        )}`
+                      )
+                    }
+                    className="w-full gap-2 text-sm shadow-md"
+                  >
+                    <LogIn className="h-4 w-4" />
+                    <span>Sign in to Preserve Progress</span>
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setShowSignInPromptModal(false)}
+                    className="w-full text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Continue as Guest for now
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

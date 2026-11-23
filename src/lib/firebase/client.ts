@@ -1,6 +1,10 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getAuth, Auth } from "firebase/auth";
-import { getFirestore, Firestore } from "firebase/firestore";
+import {
+  getFirestore,
+  initializeFirestore,
+  Firestore,
+} from "firebase/firestore";
 import { getStorage, FirebaseStorage } from "firebase/storage";
 import { getAnalytics, isSupported, Analytics } from "firebase/analytics";
 
@@ -52,7 +56,13 @@ export function getFirebaseDb(): Firestore | null {
   const app = getFirebaseApp();
   if (!app) return null;
   if (!dbInstance) {
-    dbInstance = getFirestore(app);
+    try {
+      dbInstance = initializeFirestore(app, {
+        ignoreUndefinedProperties: true,
+      });
+    } catch {
+      dbInstance = getFirestore(app);
+    }
   }
   return dbInstance;
 }

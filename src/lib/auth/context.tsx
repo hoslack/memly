@@ -146,19 +146,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           JSON.stringify(appUser)
         );
       }
-      if (fbUser) {
-        setFirebaseUser(fbUser);
-      }
-      setUser(appUser);
-
-      // Migrate any guest decks in background (non-blocking)
+      // Migrate any guest decks and revision progress immediately so no progress is lost
       const guestId =
         typeof window !== "undefined"
           ? window.localStorage.getItem(GUEST_STORAGE_KEY)
           : null;
       if (guestId && guestId !== appUser.uid) {
-        migrateGuestDataToUser(guestId, appUser.uid).catch(() => {});
+        await migrateGuestDataToUser(guestId, appUser.uid).catch(() => {});
       }
+
+      if (fbUser) {
+        setFirebaseUser(fbUser);
+      }
+      setUser(appUser);
 
       // Sync user profile to Firestore in background (non-blocking)
       const db = getFirebaseDb();

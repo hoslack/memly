@@ -36,13 +36,15 @@ export function DeckList() {
   const [loading, setLoading] = useState(true);
 
   const loadDecks = useCallback(async () => {
-    if (!user?.uid || user.uid === "guest_ssr") return;
     setLoading(true);
     try {
-      const decks = await listUserDecks(user.uid);
+      const decks = await listUserDecks(user?.uid);
       const enriched = await Promise.all(
         decks.map(async (deck) => {
-          const session = await getStudySession(user.uid, deck.id);
+          const session =
+            user?.uid && user.uid !== "guest_ssr"
+              ? await getStudySession(user.uid, deck.id)
+              : null;
           return { deck, session };
         })
       );

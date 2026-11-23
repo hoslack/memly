@@ -55,17 +55,56 @@ function generateId(prefix: string): string {
 }
 
 /**
- * Helper to race a Firestore read against a short timeout so the UI never hangs
+ * Strips undefined properties recursively so Firestore writeBatch / setDoc never throws
+ * "Unsupported field value: undefined".
+ */
+function sanitizeForFirestore<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data)) as T;
+}
+
+/**
+ * Helper to race a Firestore operation against a timeout so the UI never hangs
  * when Cloud Firestore is offline or not yet provisioned.
  */
 async function withTimeout<T>(
   promise: Promise<T>,
-  timeoutMs = 1800
+  timeoutMs = 6000
 ): Promise<T | null> {
   return Promise.race([
     promise,
     new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
   ]);
+}
+
+/**
+ * Syncs a deck and its questions to Cloud Firestore so every user (including unauthenticated guests)
+ * can see and revise the deck from any browser or device.
+ */
+async function syncDeckAndQuestionsToFirestore(
+  deck: DeckRecord,
+  questions: QuestionRecord[]
+): Promise<void> {
+  const db = getFirebaseDb();
+  if (!db) return;
+
+  try {
+    const cleanDeck = sanitizeForFirestore(deck);
+    const cleanQuestions = sanitizeForFirestore(questions);
+
+    // Firestore writeBatch supports up to 500 operations; chunk safely
+    const batch = writeBatch(db);
+    const deckRef = doc(db, "decks", cleanDeck.id);
+    batch.set(deckRef, cleanDeck, { merge: true });
+
+    for (const q of cleanQuestions) {
+      const qRef = doc(db, "questions", q.id);
+      batch.set(qRef, q, { merge: true });
+    }
+
+    await withTimeout(batch.commit(), 5000);
+  } catch (err) {
+    console.warn("[Firestore Sync] Could not sync deck to cloud:", err);
+  }
 }
 
 /**
@@ -130,33 +169,23 @@ export async function saveGeneratedDeck(params: {
   localQuestions[deckId] = questions;
   writeLocalJson(LOCAL_QUESTIONS_KEY, localQuestions);
 
-  // 2. Sync to shared Firestore in the background (so all students can access the deck)
-  const db = getFirebaseDb();
-  if (db) {
-    try {
-      const batch = writeBatch(db);
-      const deckRef = doc(db, "decks", deckId);
-      batch.set(deckRef, deck);
-
-      for (const q of questions) {
-        const qRef = doc(db, "questions", q.id);
-        batch.set(qRef, q);
-      }
-      batch.commit().catch(() => {});
-    } catch {
-      // Ignored; persisted locally
-    }
-  }
+  // 2. Sync to shared Firestore so all students (even before signing in) can access the deck
+  await syncDeckAndQuestionsToFirestore(deck, questions);
 
   return { deck, questions };
 }
 
 /**
  * Lists all saved decks available in the app (both shared community decks from Firestore
- * and any locally saved decks on this device) so everyone who accesses the app can revise them.
+ * and any locally saved decks on this device) so everyone who accesses the app can revise them
+ * even before signing in.
  */
 export async function listUserDecks(_userId?: string): Promise<DeckRecord[]> {
   const localDecks = readLocalJson<DeckRecord[]>(LOCAL_DECKS_KEY, []);
+  const localQuestionsMap = readLocalJson<Record<string, QuestionRecord[]>>(
+    LOCAL_QUESTIONS_KEY,
+    {}
+  );
 
   const db = getFirebaseDb();
   if (db) {
@@ -166,14 +195,25 @@ export async function listUserDecks(_userId?: string): Promise<DeckRecord[]> {
         orderBy("createdAt", "desc"),
         limit(100)
       );
-      const snap = await withTimeout(getDocs(q), 1800);
+      const snap = await withTimeout(getDocs(q), 6000);
       if (snap) {
         const remoteDecks: DeckRecord[] = [];
+        const remoteIds = new Set<string>();
         snap.forEach((docSnap) => {
-          remoteDecks.push(docSnap.data() as DeckRecord);
+          const d = docSnap.data() as DeckRecord;
+          remoteDecks.push(d);
+          remoteIds.add(d.id);
         });
 
-        if (remoteDecks.length > 0) {
+        // Background-backfill any locally created decks that aren't in Firestore yet
+        for (const localDeck of localDecks) {
+          if (!remoteIds.has(localDeck.id)) {
+            const qs = localQuestionsMap[localDeck.id] ?? [];
+            syncDeckAndQuestionsToFirestore(localDeck, qs).catch(() => {});
+          }
+        }
+
+        if (remoteDecks.length > 0 || localDecks.length > 0) {
           const mergedMap = new Map<string, DeckRecord>();
           for (const d of [...remoteDecks, ...localDecks]) {
             if (!mergedMap.has(d.id)) {
@@ -183,7 +223,6 @@ export async function listUserDecks(_userId?: string): Promise<DeckRecord[]> {
           const combined = Array.from(mergedMap.values()).sort((a, b) =>
             b.createdAt.localeCompare(a.createdAt)
           );
-          // Cache merged list locally for fast loads
           writeLocalJson(LOCAL_DECKS_KEY, combined);
           return combined;
         }
@@ -219,7 +258,7 @@ export async function getDeckWithQuestions(
       if (!deck) {
         const deckSnap = await withTimeout(
           getDoc(doc(db, "decks", deckId)),
-          1800
+          6000
         );
         if (deckSnap && deckSnap.exists()) {
           deck = deckSnap.data() as DeckRecord;
@@ -231,7 +270,7 @@ export async function getDeckWithQuestions(
           collection(db, "questions"),
           where("deckId", "==", deckId)
         );
-        const qSnap = await withTimeout(getDocs(qQuery), 1800);
+        const qSnap = await withTimeout(getDocs(qQuery), 6000);
         if (qSnap) {
           const remoteQuestions: QuestionRecord[] = [];
           qSnap.forEach((s) => remoteQuestions.push(s.data() as QuestionRecord));
@@ -444,12 +483,26 @@ export async function migrateGuestDataToUser(
     LOCAL_SESSIONS_KEY,
     {}
   );
+  const db = getFirebaseDb();
   for (const key of Object.keys(localSessions)) {
     const sess = localSessions[key];
     if (sess.userId === guestId) {
-      const updatedSess = { ...sess, userId: newUserId };
-      localSessions[`${newUserId}_${sess.deckId}`] = updatedSess;
+      const newKey = `${newUserId}_${sess.deckId}`;
+      const updatedSess: StudySessionRecord = {
+        ...sess,
+        id: newKey,
+        userId: newUserId,
+      };
+      localSessions[newKey] = updatedSess;
       delete localSessions[key];
+
+      if (db && !newUserId.startsWith("guest_")) {
+        setDoc(
+          doc(db, "studySessions", newKey),
+          sanitizeForFirestore(updatedSess),
+          { merge: true }
+        ).catch(() => {});
+      }
     }
   }
   writeLocalJson(LOCAL_SESSIONS_KEY, localSessions);

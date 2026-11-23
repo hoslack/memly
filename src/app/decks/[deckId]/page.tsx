@@ -44,14 +44,18 @@ export default function DeckDetailsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!params?.deckId || !user?.uid || user.uid === "guest_ssr") return;
+    if (!params?.deckId) return;
     let active = true;
 
     async function load() {
       setLoading(true);
       try {
-        const res = await getDeckWithQuestions(user.uid, params.deckId);
-        const sess = await getStudySession(user.uid, params.deckId);
+        const uid = user?.uid || "guest_public";
+        const res = await getDeckWithQuestions(uid, params.deckId);
+        const sess =
+          user?.uid && user.uid !== "guest_ssr"
+            ? await getStudySession(user.uid, params.deckId)
+            : null;
         if (!active) return;
         if (res) {
           setDeck(res.deck);

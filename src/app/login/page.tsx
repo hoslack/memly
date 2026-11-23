@@ -32,6 +32,17 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const getRedirectDestination = (): string => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const redirect = params.get("redirect");
+      if (redirect && redirect.startsWith("/")) {
+        return redirect;
+      }
+    }
+    return "/dashboard";
+  };
+
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -53,7 +64,7 @@ export default function LoginPage() {
       } else {
         await registerWithEmail(email, password, displayName);
       }
-      router.push("/dashboard");
+      router.push(getRedirectDestination());
     } catch (err: unknown) {
       setError(
         err instanceof Error
@@ -70,7 +81,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await signInWithGoogle();
-      router.push("/dashboard");
+      router.push(getRedirectDestination());
     } catch (err: unknown) {
       setError(
         err instanceof Error

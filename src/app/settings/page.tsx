@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTheme } from "next-themes";
@@ -11,7 +11,6 @@ import {
   Moon,
   Monitor,
   ShieldCheck,
-  Sparkles,
   ArrowLeft,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/context";
@@ -29,20 +28,6 @@ export default function SettingsPage() {
   const router = useRouter();
   const { user, signOut, isFirebaseAvailable } = useAuth();
   const { theme, setTheme } = useTheme();
-  const [health, setHealth] = useState<{
-    geminiConfigured: boolean;
-    geminiModel: string;
-    openRouterConfigured?: boolean;
-    openRouterModel?: string;
-    firebaseConfigured: boolean;
-  } | null>(null);
-
-  useEffect(() => {
-    fetch("/api/health")
-      .then((r) => r.json())
-      .then((data) => setHealth(data))
-      .catch(() => {});
-  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -62,7 +47,7 @@ export default function SettingsPage() {
           Account & Study Settings
         </h1>
         <p className="text-sm text-muted-foreground">
-          Manage your profile, appearance, and AI exam setter status.
+          Manage your profile, appearance, and cloud sync status.
         </p>
       </div>
 
@@ -156,60 +141,18 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* AI & Cloud Service Status Card */}
+      {/* Cloud Storage Status Card */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <ShieldCheck className="h-5 w-5 text-primary" />
-            <span>Environment & Service Status</span>
+            <span>Storage & Sync Status</span>
           </CardTitle>
           <CardDescription>
-            Server-side Google Gemini and Firebase integration diagnostics
+            Deck and personal study progress persistence
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <div className="flex items-center justify-between rounded-xl border border-border/70 p-3.5">
-            <div className="flex items-center gap-2.5">
-              <Sparkles className="h-4 w-4 text-primary" />
-              <div>
-                <p className="font-semibold">
-                  Google Gemini API (Primary Provider)
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Model: {health?.geminiModel || "gemini-3.5-flash-lite"}
-                </p>
-              </div>
-            </div>
-            <Badge
-              variant={health?.geminiConfigured ? "success" : "warning"}
-            >
-              {health?.geminiConfigured
-                ? "Primary Active"
-                : "Needs GEMINI_API_KEY"}
-            </Badge>
-          </div>
-
-          <div className="flex items-center justify-between rounded-xl border border-border/70 p-3.5">
-            <div className="flex items-center gap-2.5">
-              <Sparkles className="h-4 w-4 text-emerald-500" />
-              <div>
-                <p className="font-semibold">
-                  OpenRouter API (Automatic Fallback)
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Model: {health?.openRouterModel || "openrouter/free"} (Used only on Gemini 429/503)
-                </p>
-              </div>
-            </div>
-            <Badge
-              variant={health?.openRouterConfigured ? "success" : "secondary"}
-            >
-              {health?.openRouterConfigured
-                ? "Fallback Ready"
-                : "Not Configured"}
-            </Badge>
-          </div>
-
           <div className="flex items-center justify-between rounded-xl border border-border/70 p-3.5">
             <div>
               <p className="font-semibold">Firebase Auth & Cloud Firestore</p>
