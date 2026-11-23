@@ -76,7 +76,7 @@ export async function saveGeneratedDeck(params: {
   userId: string;
   payload: GeneratedDeckPayload;
   sourceFileName: string;
-  sourceType: "pdf" | "text" | "sample";
+  sourceType: "pdf" | "text" | "sample" | "json" | "csv";
   aiMetadata?: DeckRecord["aiMetadata"];
 }): Promise<{ deck: DeckRecord; questions: QuestionRecord[] }> {
   const { userId, payload, sourceFileName, sourceType, aiMetadata } = params;

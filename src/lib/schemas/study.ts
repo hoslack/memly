@@ -16,7 +16,7 @@ export type DeckStatus =
   | "ready"
   | "failed";
 
-export type AIProviderName = "gemini" | "openrouter" | "sample";
+export type AIProviderName = "gemini" | "openrouter" | "sample" | "import";
 
 export interface AIMetadata {
   primaryProvider?: AIProviderName;
@@ -37,7 +37,7 @@ export interface DeckRecord {
   subject: string;
   description: string;
   sourceFileName: string;
-  sourceType: "pdf" | "text" | "sample";
+  sourceType: "pdf" | "text" | "sample" | "json" | "csv";
   questionCount: number;
   topics: TopicItem[];
   status: DeckStatus;

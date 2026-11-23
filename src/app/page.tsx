@@ -32,7 +32,7 @@ export default function HomePage() {
         <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-xs font-medium text-muted-foreground">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary/70 px-3 py-1">
             <Zap className="h-3.5 w-3.5 text-primary" />
-            1. Drop PDF or paste notes
+            1. Paste JSON/CSV or upload PDF
           </span>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary/70 px-3 py-1">
             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />

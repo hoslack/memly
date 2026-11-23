@@ -20,8 +20,8 @@ export default function CreateDeckPage() {
           Create a New Revision Deck
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Upload a PDF or paste your study material. Gemini handles titles,
-          topics, and questions automatically.
+          Paste ready-made JSON or CSV questions (zero AI credits needed), or
+          upload a PDF / study notes.
         </p>
       </div>
 
